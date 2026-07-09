@@ -27,10 +27,12 @@ import os
 import re
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-RULER_KNOWN_MM   = 10          # the span we measure on the ruler
-MIN_OYSTER_PX    = 800         # minimum contour area (pixels²) to count as oyster
-MAX_OYSTER_PX    = 120_000     # maximum (avoids picking up the whole table)
-RULER_ROI_FRAC   = (0.55, 0.65, 0.85, 0.95)  # (x0,y0,x1,y1) as fraction of image
+RULER_KNOWN_MM   = 10          # mm between major (cm) graduation marks on the ruler
+MIN_OYSTER_PX    = 8_000       # minimum contour area (pixels²) to count as oyster
+MAX_OYSTER_PX    = 500_000     # maximum (avoids picking up the whole table)
+RULER_ROI_FRAC   = (0.818, 0.52, 0.836, 0.64)  # vertical ruler on right side
+RULER_ORIENT     = "vertical"   # "horizontal" or "vertical"
+MANUAL_PX_PER_MM = 2.15         # derived from ruler tick measurement: 21.5px / 10mm
 
 # ── Colours (BGR for OpenCV, then converted) ──────────────────────────────────
 COL_LENGTH = (0,   220,  50)   # green
@@ -48,39 +50,98 @@ def load_image(path):
 # ── STEP 1: Ruler calibration ─────────────────────────────────────────────────
 def calibrate_ruler(img, known_mm=RULER_KNOWN_MM, roi_frac=RULER_ROI_FRAC):
     """
-    Crop the ruler region-of-interest, find vertical tick marks using
-    column-wise intensity projection, then compute px-per-mm.
-    Returns (px_per_mm, ruler_roi_coords, tick_positions_in_full_img)
+    Detect the ruler's major graduation marks (cm lines) in the ROI and compute
+    px/mm = median_spacing_between_major_marks / known_mm.
+
+    Strategy:
+    1. Try to detect long dark vertical lines (tick marks) via Hough lines
+       within the ruler ROI.
+    2. Fall back to column-projection peak detection if Hough yields < 3 lines.
+    3. The detected peak spacing represents 'known_mm' millimetres, so
+       px_per_mm = spacing / known_mm.
     """
+    from scipy.signal import find_peaks, savgol_filter
+
     h, w = img.shape[:2]
     x0 = int(roi_frac[0] * w);  y0 = int(roi_frac[1] * h)
     x1 = int(roi_frac[2] * w);  y1 = int(roi_frac[3] * h)
 
-    roi = img[y0:y1, x0:x1]
+    roi  = img[y0:y1, x0:x1]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    roi_h, roi_w = gray.shape
 
-    # The ruler has dark tick marks on a light background.
-    # Invert so ticks are bright, then project onto x-axis.
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # ── Try Hough line detection for major tick marks ─────────────────────────
+    edges = cv2.Canny(gray, 30, 100)
+    # Detect lines that span at least 30% of the ROI height (major ticks only)
+    min_line_len = int(roi_h * 0.30)
+    lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/2,
+                            threshold=15, minLineLength=min_line_len, maxLineGap=4)
+
+    hough_x = []
+    if lines is not None:
+        for ln in lines:
+            x1l, y1l, x2l, y2l = ln[0]
+            # Only nearly-vertical lines
+            if abs(x2l - x1l) < 5:
+                hough_x.append((x1l + x2l) // 2)
+
+    hough_x = sorted(set(hough_x))
+    # Cluster nearby detections (within 8 px) into single marks
+    clustered = []
+    for xv in hough_x:
+        if not clustered or xv - clustered[-1] > 8:
+            clustered.append(xv)
+    hough_x = clustered
+
+    # ── Column projection fallback ────────────────────────────────────────────
+    # Invert: on a white/light ruler, tick marks are dark → after inversion, bright
+    inv = cv2.bitwise_not(gray)
+    # Only keep pixels darker than the 40th percentile (tick marks)
+    _, thresh = cv2.threshold(gray, int(np.percentile(gray, 40)), 255,
+                               cv2.THRESH_BINARY_INV)
     col_proj = thresh.sum(axis=0).astype(float)
+    wl = max(5, (roi_w // 30) | 1)  # window must be odd
+    smooth = savgol_filter(col_proj, window_length=wl, polyorder=2)
 
-    # Smooth and find local maxima (tick positions)
-    from scipy.signal import find_peaks, savgol_filter
-    smooth = savgol_filter(col_proj, window_length=max(5, len(col_proj)//40 | 1), polyorder=2)
-    peaks, props = find_peaks(smooth,
-                              distance=max(5, len(smooth)//60),
-                              prominence=smooth.max() * 0.12)
+    # Look for peaks with minimum distance matching expected cm spacing
+    # Expected: ruler is maybe 150mm long in ~roi_w pixels → 1mm ≈ roi_w/150
+    # cm marks are 10mm apart → expected distance ≈ roi_w/15
+    min_dist = max(8, roi_w // 20)
+    peaks, _ = find_peaks(smooth,
+                          distance=min_dist,
+                          prominence=smooth.max() * 0.08)
 
-    # Use median spacing between peaks as 1 mm; RULER_KNOWN_MM ticks = RULER_KNOWN_MM mm
-    if len(peaks) < 2:
-        raise RuntimeError("Could not find ruler tick marks. Check RULER_ROI_FRAC.")
+    # Choose best source: Hough (if ≥3 marks found) else projection peaks
+    if len(hough_x) >= 3:
+        spacings   = np.diff(hough_x)
+        use_peaks  = np.array(hough_x)
+        source     = "Hough lines"
+    elif len(peaks) >= 2:
+        spacings   = np.diff(peaks)
+        use_peaks  = peaks
+        source     = "column projection"
+    else:
+        raise RuntimeError(
+            "Ruler calibration failed: could not detect graduation marks.\n"
+            "Adjust RULER_ROI_FRAC to better frame the ruler, or set "
+            "MANUAL_PX_PER_MM in the script.")
 
-    spacings = np.diff(peaks)
-    median_spacing = float(np.median(spacings))
-    px_per_mm = median_spacing   # each tick = 1 mm
+    # Filter out outlier spacings (keep within 50% of median)
+    med = np.median(spacings)
+    good = spacings[np.abs(spacings - med) < 0.5 * med]
+    if len(good) == 0:
+        good = spacings
+    median_spacing = float(np.median(good))
 
-    # Map tick x positions back to full image coords
-    tick_x_full = peaks + x0
+    # Each detected mark is 'known_mm' apart → divide to get px per mm
+    px_per_mm = median_spacing / known_mm
+
+    print(f"   Calibration source: {source}")
+    print(f"   Marks detected: {len(use_peaks)}  |  "
+          f"median mark spacing: {median_spacing:.1f} px  |  "
+          f"assumed interval: {known_mm} mm")
+
+    tick_x_full = use_peaks + x0
     tick_y_full = (y0 + y1) // 2
 
     return px_per_mm, (x0, y0, x1, y1), tick_x_full, tick_y_full, col_proj, smooth, peaks
@@ -115,7 +176,9 @@ def segment_oysters(img):
 
     # --- Watershed to split touching oysters ---
     dist = cv2.distanceTransform(cleaned, cv2.DIST_L2, 5)
-    _, sure_fg = cv2.threshold(dist, 0.35 * dist.max(), 255, 0)
+    # Higher threshold (0.55) = only accept well-separated cores as seeds
+    # → fewer, larger watershed regions → less over-segmentation
+    _, sure_fg = cv2.threshold(dist, 0.55 * dist.max(), 255, 0)
     sure_fg = sure_fg.astype(np.uint8)
 
     sure_bg = cv2.dilate(cleaned, kernel, iterations=3)
@@ -224,17 +287,22 @@ def draw_ruler_calibration(img, ruler_roi, tick_x_full, tick_y, px_per_mm):
     vis = img.copy()
     x0, y0, x1, y1 = ruler_roi
     cv2.rectangle(vis, (x0, y0), (x1, y1), COL_RULER, 3)
-    # Mark first two ticks used for scale
+    # Mark detected tick positions if any were found
     for tx in tick_x_full[:20]:
         cv2.line(vis, (tx, tick_y - 18), (tx, tick_y + 18), COL_RULER, 2)
-    # Draw a 10 mm scale bar
-    bar_x = tick_x_full[0]
-    bar_y = tick_y + 30
+    # Draw a 10 mm scale bar anchored to the ruler ROI
+    bar_x = x0 + 10
+    bar_y = y1 + 30
     bar_end = bar_x + int(10 * px_per_mm)
     cv2.line(vis, (bar_x, bar_y), (bar_end, bar_y), COL_RULER, 3)
-    cv2.putText(vis, "10 mm",
-                (bar_x, bar_y + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, COL_RULER, 2)
+    cv2.line(vis, (bar_x, bar_y - 8), (bar_x, bar_y + 8), COL_RULER, 2)
+    cv2.line(vis, (bar_end, bar_y - 8), (bar_end, bar_y + 8), COL_RULER, 2)
+    cv2.putText(vis, f"10 mm = {int(10*px_per_mm)} px",
+                (bar_x, bar_y + 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, COL_RULER, 2)
+    cv2.putText(vis, f"{px_per_mm:.2f} px/mm",
+                (x0, y0 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, COL_RULER, 2)
     return vis
 
 # ── STEP 6: Export xlsx ────────────────────────────────────────────────────────
@@ -324,7 +392,8 @@ def save_diagnostic(img_raw, img_ruler, img_segmented, img_measured,
     roi_w = x1 - x0
     ax_ins.plot(col_proj[:roi_w], color="#8FA3B1", linewidth=0.8, alpha=0.6, label="raw proj")
     ax_ins.plot(smooth[:roi_w],   color="#F1C40F", linewidth=1.2, label="smoothed")
-    ax_ins.scatter(peaks[peaks < roi_w], smooth[peaks[peaks < roi_w]],
+    pk_in = peaks[peaks < roi_w].astype(int)
+    ax_ins.scatter(pk_in, smooth[pk_in],
                    color="#E74C3C", s=18, zorder=5, label="ticks")
     ax_ins.set_xticks([]); ax_ins.set_yticks([])
     ax_ins.spines[:].set_visible(False)
@@ -417,10 +486,25 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC"):
 
     # ② Calibrate
     print("\n② Calibrating ruler...")
-    px_per_mm, ruler_roi, tick_x, tick_y, col_proj, smooth, peaks = \
-        calibrate_ruler(img, known_mm=RULER_KNOWN_MM)
-    print(f"   Detected {len(peaks)} tick marks")
-    print(f"   Calibration: {px_per_mm:.3f} px/mm  (median tick spacing)")
+    if MANUAL_PX_PER_MM is not None:
+        px_per_mm = float(MANUAL_PX_PER_MM)
+        h, w = img.shape[:2]
+        rf = RULER_ROI_FRAC
+        ruler_roi = (int(rf[0]*w), int(rf[1]*h), int(rf[2]*w), int(rf[3]*h))
+        tick_x = np.array([], dtype=int)
+        tick_y = (ruler_roi[1] + ruler_roi[3]) // 2
+        col_proj = np.zeros(10); smooth = np.zeros(10); peaks = np.array([])
+        print(f"   Manual calibration: {px_per_mm:.3f} px/mm")
+    else:
+        px_per_mm, ruler_roi, tick_x, tick_y, col_proj, smooth, peaks = \
+            calibrate_ruler(img, known_mm=RULER_KNOWN_MM)
+        print(f"   Calibration: {px_per_mm:.3f} px/mm")
+
+    # Sanity check — warn if calibration looks implausible for a field photo
+    if px_per_mm > 20 or px_per_mm < 0.5:
+        print(f"   ⚠ WARNING: {px_per_mm:.2f} px/mm looks implausible for a "
+              f"field photo (expected 1–15). Check RULER_ROI_FRAC or set "
+              f"MANUAL_PX_PER_MM.")
     img_ruler = draw_ruler_calibration(img, ruler_roi, tick_x, tick_y, px_per_mm)
 
     # ③ Segment
