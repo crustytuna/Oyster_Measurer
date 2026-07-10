@@ -5,10 +5,18 @@ Pacific Oyster Lab — Goose Point
 Pipeline:
   1. Load image
   2. Calibrate: detect ruler tick marks → compute px/mm ratio
-  3. Detect oysters via adaptive thresholding + watershed
+  3. Detect oysters:
+       - If a blue-mask image is provided: extract blue-painted regions (HSV)
+       - Otherwise: adaptive thresholding + watershed on the raw image
   4. Measure each oyster: PCA axes → length (major) & width (minor)
   5. Export xlsx matching the reference data format
   6. Save annotated diagnostic images showing every step
+
+Usage:
+  python3 measure_oysters.py <image_path> [output_dir] [site] [initials] [mask_path]
+
+  mask_path: optional path to a blue-painted mask image where each oyster
+             is coloured solid blue. If omitted, falls back to adaptive threshold.
 """
 
 import cv2
@@ -146,7 +154,59 @@ def calibrate_ruler(img, known_mm=RULER_KNOWN_MM, roi_frac=RULER_ROI_FRAC):
 
     return px_per_mm, (x0, y0, x1, y1), tick_x_full, tick_y_full, col_proj, smooth, peaks
 
-# ── STEP 2: Oyster segmentation ───────────────────────────────────────────────
+# ── STEP 2a: Segmentation from blue-painted mask ──────────────────────────────
+# Blue HSV range (OpenCV scale H: 0–180)
+BLUE_HSV_LOWER = np.array([100,  70,  50])
+BLUE_HSV_UPPER = np.array([130, 255, 255])
+
+def segment_from_blue_mask(img, mask_img):
+    """
+    Detect blue-painted oyster regions in mask_img, then apply watershed to
+    separate touching individuals. Returns (contours, raw_blue_binary_mask).
+    """
+    hsv = cv2.cvtColor(mask_img, cv2.COLOR_BGR2HSV)
+    blue_binary = cv2.inRange(hsv, BLUE_HSV_LOWER, BLUE_HSV_UPPER)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    cleaned = cv2.morphologyEx(blue_binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN,  kernel, iterations=1)
+
+    dist = cv2.distanceTransform(cleaned, cv2.DIST_L2, 5)
+    _, sure_fg = cv2.threshold(dist, 0.40 * dist.max(), 255, 0)
+    sure_fg = sure_fg.astype(np.uint8)
+
+    sure_bg = cv2.dilate(cleaned, kernel, iterations=3)
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    _, markers = cv2.connectedComponents(sure_fg)
+    markers += 1
+    markers[unknown == 255] = 0
+
+    img_ws = img.copy()
+    markers = cv2.watershed(img_ws, markers)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    contours = []
+    for label in np.unique(markers):
+        if label <= 1:
+            continue
+        m = np.zeros(gray.shape, np.uint8)
+        m[markers == label] = 255
+        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if MIN_OYSTER_PX < cv2.contourArea(c) < MAX_OYSTER_PX:
+                contours.append(c)
+
+    def sort_key(c):
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            return (0, 0)
+        return (int(M["m01"] / M["m00"]) // 80, int(M["m10"] / M["m00"]))
+
+    contours.sort(key=sort_key)
+    return contours, blue_binary
+
+# ── STEP 2b: Fallback segmentation via adaptive threshold ─────────────────────
 def segment_oysters(img):
     """
     Convert to LAB colour space, use the A channel (red-green) to
@@ -363,7 +423,7 @@ def export_xlsx(measurements, px_per_mm, image_path, out_path,
 # ── STEP 7: Multi-panel diagnostic figure ─────────────────────────────────────
 def save_diagnostic(img_raw, img_ruler, img_segmented, img_measured,
                     col_proj, smooth, peaks, ruler_roi, px_per_mm,
-                    measurements, out_path):
+                    measurements, out_path, blue_mask=None):
     fig = plt.figure(figsize=(22, 20))
     fig.patch.set_facecolor("#0D1B2A")
 
@@ -398,14 +458,17 @@ def save_diagnostic(img_raw, img_ruler, img_segmented, img_measured,
     ax_ins.set_xticks([]); ax_ins.set_yticks([])
     ax_ins.spines[:].set_visible(False)
 
-    # Panel 3: thresholded mask
-    gray = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
-    lab  = cv2.cvtColor(img_raw, cv2.COLOR_BGR2LAB)
-    L    = cv2.split(lab)[0]
-    mask = cv2.adaptiveThreshold(L, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                 cv2.THRESH_BINARY_INV, 51, 8)
+    # Panel 3: blue mask (if provided) or adaptive threshold fallback
     ax3 = fig.add_subplot(3, 2, 3)
-    show(ax3, mask, "③ Adaptive Threshold Mask\n(oysters = white)", cmap="gray")
+    if blue_mask is not None:
+        show(ax3, blue_mask, "③ Blue Mask Detection\n(blue-painted oysters = white)", cmap="gray")
+    else:
+        gray = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+        lab  = cv2.cvtColor(img_raw, cv2.COLOR_BGR2LAB)
+        L    = cv2.split(lab)[0]
+        thresh = cv2.adaptiveThreshold(L, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY_INV, 51, 8)
+        show(ax3, thresh, "③ Adaptive Threshold Mask\n(oysters = white)", cmap="gray")
 
     # Panel 4: segmented / watershed
     ax4 = fig.add_subplot(3, 2, 4)
@@ -466,7 +529,7 @@ def coloured_segments(img, contours):
     return blended
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def run(image_path, out_dir=None, site="Goose Point", initials="CC"):
+def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=None):
     image_path = Path(image_path)
     if out_dir is None:
         out_dir = Path.home() / "Desktop"
@@ -508,8 +571,16 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC"):
     img_ruler = draw_ruler_calibration(img, ruler_roi, tick_x, tick_y, px_per_mm)
 
     # ③ Segment
-    print("\n③ Segmenting oysters (watershed)...")
-    contours = segment_oysters(img)
+    print("\n③ Segmenting oysters...")
+    blue_mask_vis = None
+    if mask_path is not None:
+        mask_img = load_image(mask_path)
+        print(f"   Using blue-mask image: {Path(mask_path).name}")
+        contours, blue_binary = segment_from_blue_mask(img, mask_img)
+        blue_mask_vis = blue_binary
+    else:
+        print("   No mask provided — falling back to adaptive threshold")
+        contours = segment_oysters(img)
     print(f"   Detected {len(contours)} oyster individuals")
     img_seg = coloured_segments(img, contours)
 
@@ -544,7 +615,7 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC"):
     diag_path = out_dir / f"{stem}_diagnostic.png"
     save_diagnostic(img, img_ruler, img_seg, img_meas,
                     col_proj, smooth, peaks, ruler_roi, px_per_mm,
-                    measurements, diag_path)
+                    measurements, diag_path, blue_mask=blue_mask_vis)
 
     print(f"\n{'='*60}")
     print(f"  DONE  —  {len(measurements)} oysters measured")
@@ -556,10 +627,11 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC"):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 measure_oysters.py <image_path> [output_dir] [site] [initials]")
+        print("Usage: python3 measure_oysters.py <image_path> [output_dir] [site] [initials] [mask_path]")
         sys.exit(1)
     img_path  = sys.argv[1]
     out_dir   = sys.argv[2] if len(sys.argv) > 2 else None
     site      = sys.argv[3] if len(sys.argv) > 3 else "Goose Point"
     initials  = sys.argv[4] if len(sys.argv) > 4 else "CC"
-    run(img_path, out_dir, site, initials)
+    mask_path = sys.argv[5] if len(sys.argv) > 5 else None
+    run(img_path, out_dir, site, initials, mask_path)
