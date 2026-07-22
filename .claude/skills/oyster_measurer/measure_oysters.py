@@ -36,7 +36,7 @@ import re
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 RULER_KNOWN_MM   = 10          # mm between major (cm) graduation marks on the ruler
-MIN_OYSTER_PX    = 8_000       # minimum contour area (pixels²) to count as oyster
+MIN_OYSTER_PX    = 2_000       # minimum contour area (pixels²) to count as oyster
 MAX_OYSTER_PX    = 500_000     # maximum (avoids picking up the whole table)
 RULER_ROI_FRAC   = (0.818, 0.52, 0.836, 0.64)  # vertical ruler on right side
 RULER_ORIENT     = "vertical"   # "horizontal" or "vertical"
@@ -154,7 +154,77 @@ def calibrate_ruler(img, known_mm=RULER_KNOWN_MM, roi_frac=RULER_ROI_FRAC):
 
     return px_per_mm, (x0, y0, x1, y1), tick_x_full, tick_y_full, col_proj, smooth, peaks
 
-# ── STEP 2a: Segmentation from blue-painted mask ──────────────────────────────
+# ── STEP 2a: YOLO model segmentation (primary, mask-free) ────────────────────
+# Model lives next to this script; absent = fall back to blue mask or threshold.
+_YOLO_MODEL_PATH = Path(__file__).parent / "oyster_model.pt"
+_yolo_model = None  # loaded lazily on first call
+
+def _get_yolo_model():
+    global _yolo_model
+    if _yolo_model is None:
+        try:
+            from ultralytics import YOLO as _YOLO
+            _yolo_model = _YOLO(str(_YOLO_MODEL_PATH))
+        except Exception:
+            _yolo_model = False  # mark as unavailable
+    return _yolo_model if _yolo_model else None
+
+def segment_from_yolo(img):
+    """
+    Run the trained YOLOv8-seg model on a raw image. Returns a list of contours
+    (one per detected oyster), or None if the model is unavailable.
+    """
+    model = _get_yolo_model()
+    if model is None:
+        return None
+
+    h, w = img.shape[:2]
+    scale = 1024 / max(h, w)
+    img_small = cv2.resize(img, (int(w * scale), int(h * scale)))
+
+    results = model.predict(
+        img_small,
+        conf=0.25,
+        iou=0.4,
+        imgsz=1024,
+        device="mps" if _mps_available() else "cpu",
+        verbose=False,
+        max_det=500,
+    )
+
+    r = results[0]
+    if r.masks is None or len(r.masks) == 0:
+        return []
+
+    contours = []
+    for mask_data in r.masks.xy:
+        pts = (mask_data / scale).astype(np.int32)  # scale back to original size
+        if len(pts) < 3:
+            continue
+        c = pts.reshape(-1, 1, 2)
+        if MIN_OYSTER_PX < cv2.contourArea(c) < MAX_OYSTER_PX:
+            contours.append(c)
+
+    def sort_key(c):
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            return (0, 0)
+        return (int(M["m01"] / M["m00"]) // 80, int(M["m10"] / M["m00"]))
+
+    contours.sort(key=sort_key)
+    return contours
+
+def _mps_available():
+    try:
+        import torch
+        return torch.backends.mps.is_available()
+    except Exception:
+        return False
+
+def yolo_model_available():
+    return _YOLO_MODEL_PATH.exists()
+
+# ── STEP 2b: Segmentation from blue-painted mask ──────────────────────────────
 # Blue HSV range (OpenCV scale H: 0–180)
 BLUE_HSV_LOWER = np.array([100,  70,  50])
 BLUE_HSV_UPPER = np.array([130, 255, 255])
@@ -163,39 +233,57 @@ def segment_from_blue_mask(img, mask_img):
     """
     Detect blue-painted oyster regions in mask_img, then apply watershed to
     separate touching individuals. Returns (contours, raw_blue_binary_mask).
+
+    Each connected blob is processed independently so the distance-transform
+    threshold (40% of local max) is not dominated by a single large oyster,
+    which previously caused small neighbours to lose their watershed seed and
+    merge into the large one.
     """
     hsv = cv2.cvtColor(mask_img, cv2.COLOR_BGR2HSV)
     blue_binary = cv2.inRange(hsv, BLUE_HSV_LOWER, BLUE_HSV_UPPER)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    cleaned = cv2.morphologyEx(blue_binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN,  kernel, iterations=1)
-
-    dist = cv2.distanceTransform(cleaned, cv2.DIST_L2, 5)
-    _, sure_fg = cv2.threshold(dist, 0.40 * dist.max(), 255, 0)
-    sure_fg = sure_fg.astype(np.uint8)
-
-    sure_bg = cv2.dilate(cleaned, kernel, iterations=3)
-    unknown = cv2.subtract(sure_bg, sure_fg)
-
-    _, markers = cv2.connectedComponents(sure_fg)
-    markers += 1
-    markers[unknown == 255] = 0
-
-    img_ws = img.copy()
-    markers = cv2.watershed(img_ws, markers)
+    # Only remove tiny speckles — NO closing, which would bridge intentional gaps
+    # between oysters that the user painted with deliberate space between them.
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cleaned = cv2.morphologyEx(blue_binary, cv2.MORPH_OPEN, open_kernel, iterations=1)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     contours = []
-    for label in np.unique(markers):
-        if label <= 1:
+
+    # Split into individual blobs so each gets its own local distance threshold
+    num_labels, labels_map = cv2.connectedComponents(cleaned, connectivity=8)
+
+    ws_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    for blob_id in range(1, num_labels):
+        blob_mask = np.where(labels_map == blob_id, np.uint8(255), np.uint8(0))
+
+        dist = cv2.distanceTransform(blob_mask, cv2.DIST_L2, 5)
+        if dist.max() == 0:
             continue
-        m = np.zeros(gray.shape, np.uint8)
-        m[markers == label] = 255
-        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            if MIN_OYSTER_PX < cv2.contourArea(c) < MAX_OYSTER_PX:
-                contours.append(c)
+
+        # 40% of THIS blob's peak — not the global image max
+        _, sure_fg = cv2.threshold(dist, 0.40 * dist.max(), 255, 0)
+        sure_fg = sure_fg.astype(np.uint8)
+
+        sure_bg = cv2.dilate(blob_mask, ws_kernel, iterations=3)
+        unknown = cv2.subtract(sure_bg, sure_fg)
+
+        _, markers = cv2.connectedComponents(sure_fg)
+        markers += 1
+        markers[unknown == 255] = 0
+
+        img_ws = img.copy()
+        markers = cv2.watershed(img_ws, markers)
+
+        for label in np.unique(markers):
+            if label <= 1:
+                continue
+            m = np.zeros(gray.shape, np.uint8)
+            m[markers == label] = 255
+            cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in cnts:
+                if MIN_OYSTER_PX < cv2.contourArea(c) < MAX_OYSTER_PX:
+                    contours.append(c)
 
     def sort_key(c):
         M = cv2.moments(c)
@@ -578,8 +666,14 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=N
         print(f"   Using blue-mask image: {Path(mask_path).name}")
         contours, blue_binary = segment_from_blue_mask(img, mask_img)
         blue_mask_vis = blue_binary
+    elif yolo_model_available():
+        print("   Using trained YOLOv8 model (oyster_model.pt)")
+        contours = segment_from_yolo(img)
+        if contours is None:
+            print("   YOLO failed — falling back to adaptive threshold")
+            contours = segment_oysters(img)
     else:
-        print("   No mask provided — falling back to adaptive threshold")
+        print("   No mask, no model — falling back to adaptive threshold")
         contours = segment_oysters(img)
     print(f"   Detected {len(contours)} oyster individuals")
     img_seg = coloured_segments(img, contours)
