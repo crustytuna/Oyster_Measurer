@@ -1,0 +1,20 @@
+# Oyster measurement pipeline — Python dependencies
+# Install into a virtual environment:
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# Core image processing
+opencv-python-headless>=4.8,<5.0
+numpy>=1.24,<2.0          # <2.0: keeps opencv/torch wheels compatible on Python 3.9
+scipy>=1.10
+Pillow>=10.0
+
+# Output: workbook + diagnostic figures
+openpyxl>=3.1
+matplotlib>=3.7
+
+# Segmentation model (optional but strongly recommended — without it the
+# pipeline silently falls back to adaptive thresholding, which is much weaker)
+ultralytics>=8.2
+torch>=2.0
+torchvision>=0.15

@@ -1,0 +1,19 @@
+# Conda alternative to requirements.txt.
+#   conda env create -f environment.yml
+#   conda activate oyster-measure
+name: oyster-measure
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10,<3.13
+  - numpy>=1.24,<2.0
+  - scipy>=1.10
+  - matplotlib>=3.7
+  - openpyxl>=3.1
+  - pillow>=10.0
+  - pip
+  - pip:
+      - opencv-python-headless>=4.8,<5.0
+      - ultralytics>=8.2
+      - torch>=2.0
+      - torchvision>=0.15
