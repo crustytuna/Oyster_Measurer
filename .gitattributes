@@ -1,0 +1,33 @@
+# Normalize line endings for text so Windows/macOS collaborators don't churn diffs.
+* text=auto
+
+*.py    text diff=python
+*.md    text
+*.yml   text
+*.txt   text
+
+# Binary assets — never try to diff or merge these.
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.tif   binary
+*.tiff  binary
+*.xlsx  binary
+*.pt    binary
+
+# ── Git LFS (not yet enabled) ─────────────────────────────────────────────────
+# Field images run 6–36 MB each and the repo is already ~70 MB packed. Once the
+# image set grows (M3 targets 20+ labeled images), move the binaries to LFS.
+#
+# Enable on every clone BEFORE uncommenting, or collaborators without git-lfs
+# get "filter 'lfs' is not available" errors on checkout:
+#
+#   brew install git-lfs && git lfs install
+#
+# Then uncomment and run `git lfs migrate import --include="*.tif,*.png,*.pt"`
+# (this rewrites history — coordinate with everyone who has a clone).
+#
+# *.tif  filter=lfs diff=lfs merge=lfs -text
+# *.tiff filter=lfs diff=lfs merge=lfs -text
+# *.png  filter=lfs diff=lfs merge=lfs -text
+# *.pt   filter=lfs diff=lfs merge=lfs -text
