@@ -1,0 +1,35 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Never commit keys or credentials. See SECURITY note in README.
+id_rsa
+id_ed25519
+*.pem
+*.key
+.env
+.env.*
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+# ── Pipeline outputs ──────────────────────────────────────────────────────────
+# Measurement runs are reproducible from the inputs; keep them out of git.
+results/
+outputs/
+*_measured.xlsx
+*_diagnostic.png
+*_annotated_measured.png
+
+# ── Model training scratch (see M3) ───────────────────────────────────────────
+runs/
+weights/
+datasets/
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
