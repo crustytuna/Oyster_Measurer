@@ -89,7 +89,7 @@ Current false positive types to watch: barnacles, rocks, debris on similar backg
 
 ## Key People
 
-- **Christina Zhang** (qingrz2@uw.edu) — researcher, Goose Point site, primary user
+- **Christina Zhang** (qingrz2@uw.edu) — researcher, developer
 - **sr320@uw.edu** — collaborator / supervisor
 
 ---
