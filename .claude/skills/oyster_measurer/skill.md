@@ -1,6 +1,6 @@
 # Oyster Measurer Skill
 
-Automatically measures individual oyster dimensions (length & width in mm) from overhead photographs using ruler-based pixel calibration, watershed segmentation, and PCA axis fitting. Outputs an xlsx data file and annotated diagnostic images.
+Automatically measures individual Pacific oyster (*Crassostrea gigas*) dimensions (length & width in mm) from overhead field photographs taken at **any aquaculture site or location**. Uses ruler-based pixel calibration, watershed segmentation, and PCA axis fitting. Outputs an xlsx data file and annotated diagnostic images.
 
 ---
 
@@ -40,15 +40,15 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
 |---|---|---|---|
 | `image_path` | Yes | — | Path to the raw oyster JPEG/PNG |
 | `output_dir` | No | `~/Desktop` | Where to save xlsx + diagnostic images |
-| `site_name` | No | `Goose Point` | Site name written into xlsx |
-| `initials` | No | `CC` | Measurer initials written into xlsx |
+| `site_name` | No | `Unknown Site` | Site name written into xlsx — always provide the actual location |
+| `initials` | No | `--` | Measurer initials written into xlsx |
 
 **Example:**
 ```bash
 python3 .claude/skills/oyster_measurer/measure_oysters.py \
     ~/Desktop/oyster_pictures/20260522_bag380_raw.jpeg \
     ~/Desktop \
-    "Goose Point" \
+    "Willapa Bay" \
     AH
 ```
 
@@ -165,3 +165,5 @@ After the script finishes, always:
 - These are **2D projected dimensions** from a top-down photograph — not caliper measurements; slight overestimation occurs if oysters are tilted
 - Oysters should be laid flat before photography for best accuracy
 - The ruler must be in the same focal plane as the oysters for calibration to be valid
+- This skill works for Pacific oyster (*Crassostrea gigas*) from **any site or region** — not limited to any specific farm or location
+- When a user provides a site name, always use it; never assume or hard-code a location
