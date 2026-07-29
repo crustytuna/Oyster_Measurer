@@ -97,7 +97,6 @@ Current false positive types to watch: barnacles, rocks, debris on similar backg
 ## Site Context
 
 - Species: Pacific oyster (*Crassostrea gigas*)
-- Site: Goose Point aquaculture
 - Backgrounds vary: yellow trays, green tarps, white boards, gravel
 - Lighting varies: indoor flash, outdoor sun, overcast
 - Non-oyster objects to ignore: snails, shore crabs, hermit crabs, limpets, mussels, barnacles, debris
