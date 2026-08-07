@@ -1,6 +1,8 @@
 # Oyster Measurer Skill
 
-Automatically measures individual Pacific oyster (*Crassostrea gigas*) dimensions (length & width in mm) from overhead field photographs taken at **any aquaculture site or location**. Uses ruler-based pixel calibration, watershed segmentation, and PCA axis fitting. Outputs an xlsx data file and annotated diagnostic images.
+Automatically measures individual Pacific oyster (*Crassostrea gigas*) dimensions (length & width in mm) from overhead field photographs taken at **any aquaculture site or location**.
+
+This skill orchestrates four sub-skills in sequence. Read the relevant sub-skill file for full technical detail on each step.
 
 ---
 
@@ -9,19 +11,17 @@ Automatically measures individual Pacific oyster (*Crassostrea gigas*) dimension
 Activate this skill when the user:
 - Provides an oyster image path and asks to measure oyster dimensions
 - Asks to "run the oyster measurer" or "measure oysters in [image]"
-- Provides a bag number, image name, or folder path containing oyster photos
+- Provides a batch folder of raw oyster photos to process
 
 ---
 
 ## DEPENDENCIES
 
-Check and install before running:
-```
-pip3 install opencv-python-headless openpyxl scipy Pillow matplotlib
+```bash
+pip3 install opencv-python-headless openpyxl scipy Pillow matplotlib ultralytics torch
 ```
 
-The companion script is at:
-`.claude/skills/oyster_measurer/measure_oysters.py`
+The companion script is at: `.claude/skills/oyster_measurer/measure_oysters.py`
 
 ---
 
@@ -32,16 +32,17 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
     <image_path> \
     [output_dir]  \
     [site_name]   \
-    [initials]
+    [initials]    \
+    [mask_path]
 ```
 
-**Arguments:**
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `image_path` | Yes | — | Path to the raw oyster JPEG/PNG |
-| `output_dir` | No | `~/Desktop` | Where to save xlsx + diagnostic images |
-| `site_name` | No | `Unknown Site` | Site name written into xlsx — always provide the actual location |
+| `output_dir` | No | `~/Desktop` | Where to save the xlsx and diagnostic images |
+| `site_name` | No | `Unknown Site` | Written into the xlsx — always provide the actual location |
 | `initials` | No | `--` | Measurer initials written into xlsx |
+| `mask_path` | No | — | Path to a blue-painted mask PNG — forces blue-mask segmentation |
 
 **Example:**
 ```bash
@@ -54,116 +55,43 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
 
 ---
 
-## PIPELINE (6 steps — all shown in diagnostic figure)
+## PIPELINE — FOUR STEPS
 
-### Step ① — Load Image
-Read the JPEG/PNG using OpenCV. Print pixel dimensions for reference.
+Each step is documented in its own sub-skill file in this directory.
 
-### Step ② — Ruler Calibration
-- Crop the ruler region-of-interest (bottom-right quadrant by default; controlled by `RULER_ROI_FRAC` constant in the script)
-- Convert to grayscale → Otsu threshold to isolate dark tick marks on a light ruler background
-- Project pixel intensities column-wise onto the x-axis to create a 1D tick profile
-- Smooth with Savitzky-Golay filter → find peaks (each peak = one 1 mm tick mark)
-- **px/mm = median spacing between adjacent tick peaks**
-- Visualised in panel ② of the diagnostic: yellow ROI box, red dots on detected ticks, scale bar overlay
+### Step 1 — Calibration → [`skill_calibration.md`](skill_calibration.md)
+Convert the in-frame ruler or scale reference to a pixels-per-millimetre ratio.
+Three methods: caliper major ticks (10 mm spacing), checkered scale bar (10 mm per square), or silver body extent (150 mm span). For images 1–20, hardcoded values are used. Images 21+ auto-detect from a red box drawn around the ruler in the masked PNG.
 
-### Step ③ — Oyster Segmentation
-- Convert to LAB colour space; use the L (lightness) channel
-- Adaptive Gaussian thresholding (block size 51 px) to separate dark oysters from the light table surface
-- Morphological close + open to fill gaps and remove small noise
-- Distance transform → sure foreground / sure background regions
-- **Watershed algorithm** to split touching/overlapping oysters into individuals
-- Filter regions by area: `MIN_OYSTER_PX` (800 px²) to `MAX_OYSTER_PX` (120,000 px²)
-- Visualised in panel ③ (mask) and panel ④ (colour-coded watershed regions)
+### Step 2 — Detect Oysters → [`skill_detect_oysters.md`](skill_detect_oysters.md)
+Locate individual oysters and return one contour per oyster.
+Priority order: **(1)** blue-painted mask + per-blob watershed, **(2)** trained YOLOv8n-seg model (`oyster_model.pt`), **(3)** adaptive threshold + global watershed fallback.
+Area filter: `MIN_OYSTER_PX = 2,000` to `MAX_OYSTER_PX = 500,000`.
 
-### Step ④ — Dimension Measurement per Oyster
-For each segmented contour:
-- Run **PCA (Principal Component Analysis)** on all contour pixel coordinates
-- Eigenvector 1 = major axis (longest direction) → **Length**
-- Eigenvector 2 = minor axis (perpendicular) → **Width**
-- Project contour points onto each axis → span = dimension in pixels → divide by px/mm
-- Ensure Length ≥ Width (swap if needed)
-- Draw green line (length) and blue line (width) through the oyster centre on the annotated image
-- Visualised in panel ⑤; scatter plot in panel ⑥
+### Step 3 — Measure Dimensions → [`skill_measure_dimensions.md`](skill_measure_dimensions.md)
+Fit PCA axes to each contour to find length (major axis span) and width (minor axis span) in pixels, then divide by px/mm.
+Draws green (length) and blue (width) lines through each oyster centroid on the annotated image.
 
-### Step ⑤ — Export xlsx
-Writes one xlsx file matching the reference format:
-
-| Column | Value |
-|---|---|
-| Site | from argument |
-| Image Date | parsed from filename (YYYYMMDD) |
-| Initials | from argument |
-| Image Name | filename with `_raw` replaced by `_annotated` |
-| Tag ID | bag number parsed from filename |
-| Oyster | sequential integer (1, 2, 3 …) |
-| Measurement | `length` or `width ` |
-| Value mm  | float rounded to 2 decimal places |
-| Notes  | empty |
-
-Two rows per oyster (length row then width row), alternating fill colours.
-
-### Step ⑥ — Diagnostic Figure
-6-panel PNG saved to `output_dir`:
-1. Raw image
-2. Ruler calibration overlay (tick marks + scale bar + intensity projection inset)
-3. Threshold mask
-4. Watershed segmentation (colour-coded individuals)
-5. Measurement lines overlay (green=length, blue=width, red dot=centre)
-6. Scatter plot: length vs width per oyster (numbered)
+### Step 4 — Export to XLSX → [`skill_export_xlsx.md`](skill_export_xlsx.md)
+Write one Excel workbook to `~/Desktop` — one tab per image, a Summary tab, two rows per oyster (length + width), and the annotated image embedded below the data rows. Flags oysters with aspect ratio > 3.5 in the Notes column.
 
 ---
 
-## OUTPUT FILES
+## AFTER RUNNING — always report
 
-| File | Description |
-|---|---|
-| `<stem>_measured.xlsx` | Data file — one row per measurement |
-| `<stem>_annotated_measured.png` | Annotated image with measurement lines |
-| `<stem>_diagnostic.png` | 6-panel diagnostic showing every pipeline step |
-
----
-
-## CONFIGURATION (edit constants in measure_oysters.py)
-
-| Constant | Default | Purpose |
-|---|---|---|
-| `RULER_ROI_FRAC` | `(0.55, 0.65, 0.85, 0.95)` | ROI for ruler detection as (x0,y0,x1,y1) image fractions |
-| `RULER_KNOWN_MM` | `10` | Expected mm span measured on ruler |
-| `MIN_OYSTER_PX` | `800` | Minimum contour area (px²) to count as an oyster |
-| `MAX_OYSTER_PX` | `120000` | Maximum contour area (px²) — excludes table, ruler, bucket |
+1. How many oysters were detected across all images
+2. The calibration value (px/mm) and whether it falls in the expected 3–25 px/mm range
+3. Which detection method was used (blue mask / YOLO / adaptive threshold)
+4. Full path to the xlsx file saved on the Desktop
+5. Any Notes-column flags (unusual aspect ratio rows) — how many and which oyster numbers
 
 ---
 
-## AFTER RUNNING — report to the user
+## NOTES ON MEASUREMENT CONVENTIONS
 
-After the script finishes, always:
-1. State how many oysters were detected
-2. Report the calibration value (px/mm) and whether it looks reasonable (expect 5–25 px/mm for a typical field photo)
-3. Show or describe the diagnostic image panels
-4. Tell the user where the xlsx and annotated image were saved
-5. Flag any warnings: calibration failure, unusually high/low oyster count, very small or very large detections that may be noise
-
----
-
-## TROUBLESHOOTING
-
-| Problem | Likely cause | Fix |
-|---|---|---|
-| "Could not find ruler tick marks" | `RULER_ROI_FRAC` doesn't cover the ruler | Adjust the four fractions to better crop the ruler region |
-| Too few oysters detected | `MIN_OYSTER_PX` too large or threshold too aggressive | Lower `MIN_OYSTER_PX`; try different lighting correction |
-| Too many detections (noise) | `MIN_OYSTER_PX` too small | Raise `MIN_OYSTER_PX` |
-| Touching oysters merged into one | Watershed failing | Lower the distance threshold inside `segment_oysters()` (currently `0.35 * dist.max()`) |
-| px/mm value looks wrong | Ruler is partially obscured or ROI incorrect | Check panel ② of diagnostic; adjust `RULER_ROI_FRAC` |
-
----
-
-## NOTES ON OYSTER-SPECIFIC MEASUREMENT CONVENTIONS
-
-- **Length** = the longest axis through the oyster body (corresponds to the dorsal-ventral or anterior-posterior axis depending on orientation)
-- **Width** = the axis perpendicular to length, measured through the same centre point
-- These are **2D projected dimensions** from a top-down photograph — not caliper measurements; slight overestimation occurs if oysters are tilted
-- Oysters should be laid flat before photography for best accuracy
-- The ruler must be in the same focal plane as the oysters for calibration to be valid
-- This skill works for Pacific oyster (*Crassostrea gigas*) from **any site or region** — not limited to any specific farm or location
-- When a user provides a site name, always use it; never assume or hard-code a location
+- **Length** = longest axis (anterior-posterior or dorsal-ventral depending on orientation)
+- **Width** = perpendicular axis through the same centroid
+- Measurements are **2D projections** — a tilted shell reads shorter than its true length
+- Lay oysters flat before photographing for best accuracy
+- The ruler must be in the same focal plane as the oysters
+- This skill works for Pacific oyster from **any site or region** — never assume or hard-code a location
