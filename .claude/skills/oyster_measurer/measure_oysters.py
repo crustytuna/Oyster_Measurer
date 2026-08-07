@@ -164,9 +164,35 @@ def _get_yolo_model():
     if _yolo_model is None:
         try:
             from ultralytics import YOLO as _YOLO
+        except ImportError:
+            print(
+                "\n  [YOLO] ultralytics is not installed — cannot use trained model.\n"
+                "  Install it with:  pip install ultralytics\n"
+                "  Falling back to adaptive-threshold detection (less accurate).\n"
+            )
+            _yolo_model = False
+            return None
+
+        if not _YOLO_MODEL_PATH.exists():
+            print(
+                f"\n  [YOLO] Model file not found: {_YOLO_MODEL_PATH}\n"
+                f"  Download oyster_model.pt from the repo and place it next to this script.\n"
+                f"  Falling back to adaptive-threshold detection (less accurate).\n"
+            )
+            _yolo_model = False
+            return None
+
+        try:
             _yolo_model = _YOLO(str(_YOLO_MODEL_PATH))
-        except Exception:
-            _yolo_model = False  # mark as unavailable
+        except Exception as exc:
+            print(
+                f"\n  [YOLO] Failed to load model ({_YOLO_MODEL_PATH.name}): {exc}\n"
+                f"  The file may be corrupted or from an incompatible ultralytics version.\n"
+                f"  Falling back to adaptive-threshold detection (less accurate).\n"
+            )
+            _yolo_model = False
+            return None
+
     return _yolo_model if _yolo_model else None
 
 def segment_from_yolo(img):
