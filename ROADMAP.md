@@ -14,7 +14,6 @@ _Assessment date: 2026-07-27 · commit `9188d52`_
 | Skill definition | `.claude/skills/oyster_measurer/skill.md` | Out of sync with the script |
 | Trained YOLOv8n-seg model | `.claude/skills/oyster_measurer/oyster_model.pt` | 6.8 MB, no provenance |
 | Test image + ground truth | `oyster_test/` | 1 image, 84 manually measured oysters |
-| KEGG pathway skills | `Claude_Code_Folder/Skills/` | Unrelated thrust; not in a loadable skill path |
 
 The pipeline is sound in outline: ruler calibration → segmentation (YOLO / blue mask / adaptive threshold)
 → PCA major/minor axis → xlsx export matching the lab's format → 6-panel diagnostic figure. The
@@ -63,9 +62,6 @@ or models is a guess.
   downstream, which also makes per-oyster comparison against ImageJ numbering unreliable.
 - **Repo hygiene.** 156 MB with 30–36 MB PNG/TIFF committed directly; no `.gitattributes`/LFS, no
   `.gitignore`, no LICENSE. Default output goes to `~/Desktop` (`measure_oysters.py:623`).
-- **Two disjoint projects.** The README describes only KEGG/biochemical-pathway work and never
-  mentions oyster measurement; the pathway skills sit in `Claude_Code_Folder/Skills/`, which Claude
-  Code does not load as skills.
 - **No batch mode, no tests, no CI.** Real field work is many bags × many dates.
 - **No QC signal in the output.** No per-oyster confidence, area, edge-touching flag, or
   aspect-ratio outlier flag — nothing to tell a student which of 84 rows to check by hand.
@@ -83,7 +79,7 @@ or models is a guess.
       (torch 2.8.0, ultralytics 8.4.107, numpy 1.26.4 on Python 3.9) and running the pipeline
       end-to-end on bag 380.
 - [x] MIT LICENSE.
-- [x] README rewritten to cover both thrusts, with setup, photo protocol, and the calibration caveat.
+- [x] README rewritten to cover the measurement pipeline, with setup, photo protocol, and the calibration caveat.
 - [ ] **Revoke the leaked SSH key at GitHub** — owner action, not yet confirmed. This is what
       actually neutralizes the exposure; the file deletion does not.
 - [ ] **Purge the key from history** — deferred by decision. The key remains reachable in commit
@@ -178,9 +174,7 @@ file shuffling.
 ### M6 — Repo as a teaching artifact _(~2 days, ongoing)_
 
 Key features:
-- Split the two thrusts cleanly: keep `.claude/skills/` as the single skill location (move the KEGG
-  skills there so they actually load), and put library code in `src/oyster_measure/` with the skill
-  as a thin wrapper.
+- Put library code in `src/oyster_measure/` with the skill as a thin wrapper.
 - A worked tutorial notebook: raw photo → calibration → segmentation → measurement → validation, with
   the bag 380 data.
 - CONTRIBUTING.md covering the photo protocol (flat oysters, ruler in the focal plane, fiducial
