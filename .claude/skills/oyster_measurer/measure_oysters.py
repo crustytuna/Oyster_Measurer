@@ -38,9 +38,7 @@ import re
 RULER_KNOWN_MM   = 10          # mm between major (cm) graduation marks on the ruler
 MIN_OYSTER_PX    = 2_000       # minimum contour area (pixels²) to count as oyster
 MAX_OYSTER_PX    = 500_000     # maximum (avoids picking up the whole table)
-RULER_ROI_FRAC   = (0.818, 0.52, 0.836, 0.64)  # vertical ruler on right side
-RULER_ORIENT     = "vertical"   # "horizontal" or "vertical"
-MANUAL_PX_PER_MM = 2.15         # derived from ruler tick measurement: 21.5px / 10mm
+RULER_ROI_FRAC   = (0.818, 0.52, 0.836, 0.64)  # fallback ROI when no mask red-box is available
 
 # ── Colours (BGR for OpenCV, then converted) ──────────────────────────────────
 COL_LENGTH = (0,   220,  50)   # green
@@ -153,6 +151,84 @@ def calibrate_ruler(img, known_mm=RULER_KNOWN_MM, roi_frac=RULER_ROI_FRAC):
     tick_y_full = (y0 + y1) // 2
 
     return px_per_mm, (x0, y0, x1, y1), tick_x_full, tick_y_full, col_proj, smooth, peaks
+
+# ── Red-box calibration (preferred when a mask image is available) ────────────
+# The user draws a red rectangle around the caliper/ruler in the masked PNG.
+# This function finds that box, crops the raw image to it, and detects the
+# tick or checker spacing — the same approach used for batch images 21-50.
+
+RED_CAL_LOWER1 = np.array([0,   120, 100]); RED_CAL_UPPER1 = np.array([8,   255, 255])
+RED_CAL_LOWER2 = np.array([168, 120, 100]); RED_CAL_UPPER2 = np.array([180, 255, 255])
+
+def calibrate_from_red_box(raw_img, mask_img):
+    """
+    Detect the red box drawn in mask_img, crop raw_img to that region,
+    then find the tick-mark (or checker-square) spacing to compute px/mm.
+
+    Returns (px_per_mm, method_str, ruler_roi) or (None, reason, None).
+
+    Three detection strategies (tried in order):
+      1. Tick-mark projection — find the most regular peak spacing across
+         multiple minimum-distance thresholds; divide by 10 (10 mm per major tick).
+      2. Checker pattern — same projection but the dominant spacing is one
+         square width (also 10 mm).
+      3. Silver-body extent fallback — span of the metallic caliper body / 150 mm.
+    """
+    from scipy.signal import find_peaks, savgol_filter
+
+    hsv = cv2.cvtColor(mask_img, cv2.COLOR_BGR2HSV)
+    red = cv2.bitwise_or(
+        cv2.inRange(hsv, RED_CAL_LOWER1, RED_CAL_UPPER1),
+        cv2.inRange(hsv, RED_CAL_LOWER2, RED_CAL_UPPER2),
+    )
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
+    red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, k, iterations=2)
+    cnts, _ = cv2.findContours(red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = [c for c in cnts if cv2.contourArea(c) > 1000]
+    if not cnts:
+        return None, "no red box found in mask", None
+
+    x0, y0, bw, bh = cv2.boundingRect(max(cnts, key=cv2.contourArea))
+    ruler_roi = (x0, y0, x0 + bw, y0 + bh)
+    crop = raw_img[y0:y0 + bh, x0:x0 + bw]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+    best = None
+    for axis, proj in [("h", gray.mean(axis=0)), ("v", gray.mean(axis=1))]:
+        length = len(proj)
+        if length < 20:
+            continue
+        wl = min(max(length // 20 | 1, 5), 51)
+        if wl % 2 == 0:
+            wl += 1
+        smooth = savgol_filter(proj, wl, 3)
+        for inv in [True, False]:
+            sig = -smooth if inv else smooth
+            for min_d in [6, 12, 20, 35]:
+                peaks, _ = find_peaks(sig, distance=min_d, prominence=2)
+                if len(peaks) < 3:
+                    continue
+                spacings = np.diff(peaks)
+                med = float(np.median(spacings))
+                cv_val = np.std(spacings) / med if med > 0 else 99
+                score = len(peaks) * 2 - cv_val * 15
+                if best is None or score > best[0]:
+                    best = (score, med, len(peaks), axis)
+
+    if best is not None:
+        px_per_mm = round(best[1] / 10.0, 2)
+        return px_per_mm, f"red-box tick detection ({best[3]}-axis, {best[2]} peaks)", ruler_roi
+
+    # Fallback: span of the silver caliper body ≈ 150 mm
+    hsv2 = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    silver = cv2.inRange(hsv2, np.array([0, 0, 100]), np.array([180, 60, 255]))
+    ch, cw = crop.shape[:2]
+    proj = silver.mean(axis=0) if cw >= ch else silver.mean(axis=1)
+    occupied = np.where(proj > 30)[0]
+    if len(occupied) < 10:
+        return None, "calibration failed (no ticks and no silver body detected)", None
+    span = float(occupied[-1] - occupied[0])
+    return round(span / 150.0, 2), "silver body / 150 mm", ruler_roi
 
 # ── STEP 2a: YOLO model segmentation (primary, mask-free) ────────────────────
 # Model lives next to this script; absent = fall back to blue mask or threshold.
@@ -643,7 +719,7 @@ def coloured_segments(img, contours):
     return blended
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=None):
+def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=None, px_per_mm_override=None):
     image_path = Path(image_path)
     if out_dir is None:
         out_dir = Path.home() / "Desktop"
@@ -663,25 +739,47 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=N
 
     # ② Calibrate
     print("\n② Calibrating ruler...")
-    if MANUAL_PX_PER_MM is not None:
-        px_per_mm = float(MANUAL_PX_PER_MM)
+    tick_x = np.array([], dtype=int)
+    col_proj = np.zeros(10); smooth_proj = np.zeros(10); peaks = np.array([])
+
+    if px_per_mm_override is not None:
+        # Explicit user-supplied value — loud, not silent
+        px_per_mm = float(px_per_mm_override)
         h, w = img.shape[:2]
         rf = RULER_ROI_FRAC
         ruler_roi = (int(rf[0]*w), int(rf[1]*h), int(rf[2]*w), int(rf[3]*h))
-        tick_x = np.array([], dtype=int)
         tick_y = (ruler_roi[1] + ruler_roi[3]) // 2
-        col_proj = np.zeros(10); smooth = np.zeros(10); peaks = np.array([])
-        print(f"   Manual calibration: {px_per_mm:.3f} px/mm")
-    else:
-        px_per_mm, ruler_roi, tick_x, tick_y, col_proj, smooth, peaks = \
-            calibrate_ruler(img, known_mm=RULER_KNOWN_MM)
-        print(f"   Calibration: {px_per_mm:.3f} px/mm")
+        print(f"   Manual override: {px_per_mm:.3f} px/mm  ← measurements will be wrong if this is off")
 
-    # Sanity check — warn if calibration looks implausible for a field photo
-    if px_per_mm > 20 or px_per_mm < 0.5:
-        print(f"   ⚠ WARNING: {px_per_mm:.2f} px/mm looks implausible for a "
-              f"field photo (expected 1–15). Check RULER_ROI_FRAC or set "
-              f"MANUAL_PX_PER_MM.")
+    elif mask_path is not None and Path(mask_path).exists():
+        # Preferred path: red box drawn in the mask locates the ruler automatically
+        mask_img_cal = load_image(mask_path)
+        px_per_mm, cal_method, red_roi = calibrate_from_red_box(img, mask_img_cal)
+        if px_per_mm is None:
+            raise RuntimeError(
+                f"Calibration from mask red box failed: {cal_method}\n"
+                f"  Draw a red rectangle around the ruler in the masked image,\n"
+                f"  or pass --px-per-mm <value> as a manual override."
+            )
+        ruler_roi = red_roi
+        tick_y = (ruler_roi[1] + ruler_roi[3]) // 2
+        print(f"   Calibration: {px_per_mm:.3f} px/mm  ({cal_method})")
+
+    else:
+        # Fallback: use the hardcoded ROI constant (works when ruler is in the default position)
+        print(f"   No mask provided — attempting ROI-based calibration (RULER_ROI_FRAC={RULER_ROI_FRAC})")
+        print(f"   If this fails or gives a wrong value, draw a red box around the ruler in a mask image.")
+        px_per_mm, ruler_roi, tick_x, tick_y, col_proj, smooth_proj, peaks = \
+            calibrate_ruler(img, known_mm=RULER_KNOWN_MM)
+        print(f"   Calibration: {px_per_mm:.3f} px/mm  (ROI tick detection)")
+
+    # Sanity check — hard-fail for clearly impossible values
+    if px_per_mm > 50 or px_per_mm < 1.0:
+        raise RuntimeError(
+            f"Calibration result {px_per_mm:.2f} px/mm is implausible for a field photo "
+            f"(expected 3–25 px/mm).\n"
+            f"  Check that the ruler is visible, adjust RULER_ROI_FRAC, or pass --px-per-mm."
+        )
     img_ruler = draw_ruler_calibration(img, ruler_roi, tick_x, tick_y, px_per_mm)
 
     # ③ Segment
@@ -734,7 +832,7 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=N
     print("\n⑥ Saving diagnostic figure...")
     diag_path = out_dir / f"{stem}_diagnostic.png"
     save_diagnostic(img, img_ruler, img_seg, img_meas,
-                    col_proj, smooth, peaks, ruler_roi, px_per_mm,
+                    col_proj, smooth_proj, peaks, ruler_roi, px_per_mm,
                     measurements, diag_path, blue_mask=blue_mask_vis)
 
     print(f"\n{'='*60}")
@@ -746,12 +844,22 @@ def run(image_path, out_dir=None, site="Goose Point", initials="CC", mask_path=N
     return measurements, px_per_mm
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 measure_oysters.py <image_path> [output_dir] [site] [initials] [mask_path]")
-        sys.exit(1)
-    img_path  = sys.argv[1]
-    out_dir   = sys.argv[2] if len(sys.argv) > 2 else None
-    site      = sys.argv[3] if len(sys.argv) > 3 else "Goose Point"
-    initials  = sys.argv[4] if len(sys.argv) > 4 else "CC"
-    mask_path = sys.argv[5] if len(sys.argv) > 5 else None
-    run(img_path, out_dir, site, initials, mask_path)
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Measure Pacific oyster dimensions from an overhead field photograph."
+    )
+    ap.add_argument("image_path",  help="Path to the raw oyster JPEG/PNG")
+    ap.add_argument("output_dir",  nargs="?", default=None,
+                    help="Where to save outputs (default: ~/Desktop)")
+    ap.add_argument("site",        nargs="?", default="Unknown Site",
+                    help="Site name written into the xlsx")
+    ap.add_argument("initials",    nargs="?", default="--",
+                    help="Measurer initials written into the xlsx")
+    ap.add_argument("mask_path",   nargs="?", default=None,
+                    help="Blue-painted mask PNG (also used for red-box ruler calibration)")
+    ap.add_argument("--px-per-mm", type=float, default=None,
+                    help="Manual px/mm override — skips auto-calibration. "
+                         "Use only when auto-calibration cannot find the ruler.")
+    args = ap.parse_args()
+    run(args.image_path, args.output_dir, args.site, args.initials,
+        args.mask_path, px_per_mm_override=args.px_per_mm)
