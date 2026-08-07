@@ -1,15 +1,11 @@
 # Agentic AI — Summer 2026
 
 Agentic AI tooling for Pacific oyster (*Magallana gigas* / *Crassostrea gigas*) research. The repo
-holds two related lines of work:
+holds a computer-vision pipeline that measures individual oyster length and width in millimetres from
+overhead field photographs.
 
-1. **Oyster measurement** — a computer-vision pipeline that measures individual oyster length and
-   width in millimetres from overhead field photographs.
-2. **Biochemical pathway analysis** — Claude Code skills that map environmental stressors to KEGG
-   pathways and construct experimental designs around them.
-
-Both are packaged as [Claude Code skills](https://docs.claude.com/en/docs/claude-code/skills) so they
-can be invoked conversationally, but the measurement pipeline also runs as a plain CLI script.
+The pipeline is packaged as a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills)
+so it can be invoked conversationally, and it also runs as a plain CLI script.
 
 See [ROADMAP.md](ROADMAP.md) for the current assessment and development milestones.
 
@@ -28,7 +24,7 @@ to adaptive thresholding, which is considerably less accurate than the trained s
 
 ---
 
-## 1. Oyster measurement
+## Oyster measurement
 
 Measures each oyster in an overhead photo and writes a workbook matching the lab's data format.
 
@@ -74,22 +70,6 @@ hand in ImageJ** in `20260522_bag380_data.xlsx`. This is the ground truth for th
 
 ---
 
-## 2. Biochemical pathway skills
-
-In `Claude_Code_Folder/Skills/`:
-
-| Skill | Purpose |
-|---|---|
-| `oyster_stress_pathway.md` | Maps an environmental stressor (heat, hypoxia, cadmium, low salinity, pathogens…) to the relevant KEGG pathways and interprets the physiological response |
-| `oyster_design_experiment.md` | Takes a desired oyster trait and constructs an experimental design grounded in KEGG pathway logic |
-
-Both query the live [KEGG REST API](https://rest.kegg.jp/) for *C. gigas* (`crg`) pathways.
-
-> **Note:** these files are not in `.claude/skills/`, so Claude Code does not currently auto-load
-> them as skills. Relocating them is roadmap M6.
-
----
-
 ## Security
 
 **Never commit private keys, tokens, or credentials.** A private SSH key was previously committed to
@@ -103,7 +83,6 @@ this repo and has been removed; if you cloned before that cleanup, delete your c
 
 ```
 .claude/skills/oyster_measurer/   measurement skill: script, model weights, skill.md
-Claude_Code_Folder/Skills/        KEGG pathway skills
 oyster_test/                      test image + hand-measured ground truth
 ROADMAP.md                        assessment and development milestones
 ```
