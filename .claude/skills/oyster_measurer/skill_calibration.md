@@ -16,43 +16,60 @@ Activate this sub-skill when:
 
 ## WHAT THIS DOES IN THE CODE
 
-`calibrate_ruler()` in `measure_oysters.py` (lines 59–155). The result feeds every `lpx / px_per_mm` and `wpx / px_per_mm` division in the measurement step.
+`calibrate_ruler()` and `calibrate_from_red_box()` in `measure_oysters.py`. The result feeds every `lpx / px_per_mm` and `wpx / px_per_mm` division in the measurement step.
 
 ---
 
-## HOW CALIBRATION WORKS — THREE METHODS (in priority order)
+## CALIBRATION PRIORITY (how the script picks a method)
 
-### Method 1 — Caliper tick marks (default)
+The script tries these in order — the first one that succeeds is used:
+
+### 1. `--px-per-mm` CLI flag (explicit manual override)
+```bash
+python3 measure_oysters.py 5_raw.jpeg ~/Desktop "Willapa Bay" AH --px-per-mm 3.90
+```
+Use this only when auto-detection cannot find the ruler. The script prints a visible warning so you know you are overriding. There is no silent hardcoded constant anymore — the old `MANUAL_PX_PER_MM = 2.15` has been deleted.
+
+### 2. Red box in the masked image (preferred automatic method)
+If a `mask_path` is provided, the script calls `calibrate_from_red_box()`:
+1. Find the red rectangle drawn around the caliper/ruler in the masked PNG
+2. Crop the raw image to that bounding box
+3. Run robust tick-spacing detection on the crop (see methods below)
+4. Return `px/mm`
+
+This is the same approach used automatically for images 21–50 in the batch pipeline. **This is the recommended workflow** — draw a red box around the ruler in every masked image.
+
+### 3. ROI-based fallback (no mask available)
+If no mask is provided, `calibrate_ruler()` crops to `RULER_ROI_FRAC = (0.818, 0.52, 0.836, 0.64)` and runs Hough line + column-projection peak detection on that region. This only works reliably when the ruler happens to be in that position. For any other photo, provide a mask with a red box instead.
+
+---
+
+## HOW TICK DETECTION WORKS (methods 2 and 3)
+
+### Caliper major tick marks (default)
 Used for any image where a standard vernier caliper is visible.
 
-1. Crop the ruler region of interest (ROI): controlled by `RULER_ROI_FRAC` constant in the script
-2. Convert ROI to grayscale
-3. **Hough line detection** — find nearly-vertical dark lines spanning ≥ 30% of ROI height. These are the major (cm) graduation marks.
-4. Cluster nearby detections within 8 px into single marks
-5. **Fallback:** if Hough yields < 3 marks, switch to column-projection peak detection (Savitzky-Golay smoothed column sum → `scipy.signal.find_peaks`)
-6. Filter out outlier spacings (keep within 50% of median)
-7. `px/mm = median_spacing / 10` — each major caliper tick is **10 mm** apart
+- Project pixel intensities along both horizontal and vertical axes of the cropped ruler region
+- Smooth with a Savitzky-Golay filter
+- Run `scipy.signal.find_peaks` at four different minimum-distance thresholds (6, 12, 20, 35 px)
+- Score each result: more peaks + lower spacing variation = higher score
+- Best-scoring result gives the median tick spacing
+- `px/mm = median_spacing / 10` — each major caliper tick is **10 mm** apart
 
-For images 21–50: the caliper is inside a red box drawn in the masked image. The script crops the raw image to that bounding box, then runs the same tick-detection on the crop.
+### Checkered scale bar (images 7 & 8)
+Same peak-detection approach — the transitions between black and white squares register as peaks. Each square = **10 mm**.
 
-### Method 2 — Checkered scale bar (images 7 & 8)
-Used when a black-and-white checker-pattern scale bar is in frame instead of a caliper.
-
-- Same peak-detection approach, but peaks are the transitions between black and white squares
-- Each square = **10 mm**, so spacing between alternating peaks ÷ 2 gives px/mm
-
-### Method 3 — Silver body extent (images 19 & 20)
-Fallback when tick detection fails entirely (caliper too far from camera, out of frame, or at an extreme angle).
-
-1. Isolate the silver/metallic body of the caliper using HSV range `[0,0,100]–[180,60,255]`
-2. Project the silver mask onto the dominant axis; find the span of occupied pixels
-3. `px/mm = span_px / 150` — the caliper body is assumed to be ~150 mm long
+### Silver body extent fallback
+Used when tick detection fails (caliper too far from camera, extreme angle, etc.):
+1. Isolate the silver/metallic caliper body using HSV range `[0,0,100]–[180,60,255]`
+2. Find the span of occupied pixels along the dominant axis
+3. `px/mm = span_px / 150` — the caliper body is assumed ~150 mm long
 
 ---
 
-## HARDCODED CALIBRATION TABLE (images 1–20)
+## HARDCODED CALIBRATION TABLE (batch pipeline only, images 1–20)
 
-These values were manually verified and are stored directly in the script:
+The **batch** script uses pre-verified values for images 1–20. The single-image `measure_oysters.py` script no longer has any hardcoded constant — it always auto-detects.
 
 ```python
 CALIBRATION = {
@@ -68,16 +85,13 @@ CAL_METHOD = {
 }
 ```
 
-Images 21–50 are auto-detected from the red box in the corresponding masked PNG.
-
 ---
 
 ## PLAUSIBILITY CHECK
 
-After calibration, verify the result is reasonable:
+After calibration, the script checks the result automatically:
 - **Expected range:** 3–25 px/mm for a typical field photo
-- **Too low (< 3):** ruler is very far from camera, or wrong ROI — results will be wildly over-sized
-- **Too high (> 25):** ruler is extremely close, or a minor tick was detected instead of a major one — results will be undersized
+- **If outside 1–50 px/mm:** the script raises an error and stops — it does not silently produce wrong measurements
 - Panel ② of the diagnostic figure shows the detected tick positions and a 10 mm scale bar overlay — always inspect this panel
 
 ---
@@ -86,10 +100,10 @@ After calibration, verify the result is reasonable:
 
 | Constant | Default | Purpose |
 |---|---|---|
-| `RULER_ROI_FRAC` | `(0.818, 0.52, 0.836, 0.64)` | `(x0, y0, x1, y1)` as image fractions — crop this region to find the ruler |
+| `RULER_ROI_FRAC` | `(0.818, 0.52, 0.836, 0.64)` | Fallback ROI used only when no mask is provided. `(x0, y0, x1, y1)` as fractions of image size. |
 | `RULER_KNOWN_MM` | `10` | mm between major caliper graduation marks |
 
-Adjust `RULER_ROI_FRAC` if the ruler is not in the default position. Check panel ② to see where the current crop lands.
+`RULER_ROI_FRAC` only matters when running without a mask. With a mask and red box, the ruler is located automatically and this constant is ignored.
 
 ---
 
@@ -97,10 +111,10 @@ Adjust `RULER_ROI_FRAC` if the ruler is not in the default position. Check panel
 
 | Problem | Cause | Fix |
 |---|---|---|
-| `RuntimeError: Ruler calibration failed` | ROI doesn't contain the ruler | Adjust the four `RULER_ROI_FRAC` values to better frame the ruler |
-| px/mm is ~10× too high | Minor (1 mm) ticks detected instead of major (10 mm) marks | Increase `min_dist` in `find_peaks` call, or narrow the ROI to exclude minor ticks |
-| px/mm looks right but panel ② shows no tick dots | Hough fallback was used — dots won't appear for projection peaks | Normal; check the scale bar overlay instead |
-| Silver body method used unexpectedly | Caliper not close to camera, or at steep angle | Move caliper closer and parallel to the image plane |
+| "No red box found in mask" | Red rectangle not drawn in the masked PNG, or too small | Draw a red rectangle around the ruler in the masked image before running |
+| "Calibration result X px/mm is implausible" | Tick detection found wrong spacing, or ROI missed the ruler | Check panel ② of the diagnostic; provide `--px-per-mm` as an explicit override |
+| ROI-based fallback gives wrong value | `RULER_ROI_FRAC` doesn't frame the ruler in this photo | Provide a mask with a red box instead — that auto-locates the ruler regardless of position |
+| Silver body method used unexpectedly | Caliper not close to camera, or at steep angle | Move caliper closer and parallel to the image plane for future photos |
 
 ---
 
