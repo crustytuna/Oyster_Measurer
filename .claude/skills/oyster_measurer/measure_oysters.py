@@ -466,31 +466,42 @@ def segment_oysters(img):
     contours.sort(key=sort_key)
     return contours
 
-# ── STEP 3: Measure one oyster via PCA ────────────────────────────────────────
+# ── STEP 3: Measure one oyster via minimum bounding rectangle ─────────────────
 def measure_oyster(contour):
     """
-    Fit PCA on contour points to get the major (length) and minor (width) axes.
+    Fit a minimum-area bounding rectangle to the contour.
+    Length = long side, width = short side.
+    Centre is the image-moment centroid (more stable than PCA mean on
+    asymmetric or partially-detected masks).
     Returns (cx, cy, length_px, width_px, angle_deg, eigenvectors)
     """
-    pts = contour.reshape(-1, 2).astype(np.float32)
-    mean, eigvec = cv2.PCACompute(pts, mean=None)
-    cx, cy = float(mean[0, 0]), float(mean[0, 1])
+    # Moment-based centroid
+    M = cv2.moments(contour)
+    if M["m00"] != 0:
+        cx = float(M["m10"] / M["m00"])
+        cy = float(M["m01"] / M["m00"])
+    else:
+        cx, cy = 0.0, 0.0
 
-    # Project points onto each eigenvector
-    centered = pts - mean
-    proj0 = centered @ eigvec[0]   # major axis
-    proj1 = centered @ eigvec[1]   # minor axis
+    # Minimum-area bounding rectangle
+    (_, _), (rw, rh), rect_angle = cv2.minAreaRect(contour)
 
-    length_px = float(proj0.max() - proj0.min())
-    width_px  = float(proj1.max() - proj1.min())
+    # rect_angle is the angle of the rw side from the x-axis
+    if rw >= rh:
+        length_px  = float(rw)
+        width_px   = float(rh)
+        long_angle = rect_angle
+    else:
+        length_px  = float(rh)
+        width_px   = float(rw)
+        long_angle = rect_angle + 90.0
 
-    # Ensure length ≥ width
-    if width_px > length_px:
-        length_px, width_px = width_px, length_px
-        eigvec = eigvec[[1, 0]]   # swap
+    angle_rad = np.radians(long_angle)
+    ev0    = np.array([np.cos(angle_rad),  np.sin(angle_rad)], dtype=np.float32)
+    ev1    = np.array([-np.sin(angle_rad), np.cos(angle_rad)], dtype=np.float32)
+    eigvec = np.array([ev0, ev1])
 
-    angle = float(np.degrees(np.arctan2(eigvec[0, 1], eigvec[0, 0])))
-    return cx, cy, length_px, width_px, angle, eigvec
+    return cx, cy, length_px, width_px, float(long_angle), eigvec
 
 # ── STEP 4: Draw measurement lines on a copy of the image ─────────────────────
 def draw_measurements(img, contours, measurements, px_per_mm):
