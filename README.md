@@ -47,6 +47,9 @@ uses the YOLO model (falling back to adaptive threshold), and does not support b
 the diagnostic figure. Full walkthrough, including how to read px/mm off a caliper, is in
 [USER_MANUAL.md](USER_MANUAL.md).
 
+
+Online at https://oystermeasurer.streamlit.app
+
 ---
 
 ## CLI
