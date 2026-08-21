@@ -1,0 +1,10 @@
+# Runtime dependencies for the Streamlit web app only.
+# Streamlit Cloud uses this file (set in App Settings → Advanced → Requirements file).
+# For local development / model training, use requirements.txt instead.
+
+opencv-python-headless>=4.8,<5.0
+numpy>=1.24,<2.0
+openpyxl>=3.1
+streamlit>=1.35
+ultralytics>=8.2
+torch>=2.0
