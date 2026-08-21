@@ -37,7 +37,7 @@ If a `mask_path` is provided, the script calls `calibrate_from_red_box()`:
 3. Run robust tick-spacing detection on the crop (see methods below)
 4. Return `px/mm`
 
-This is the same approach used automatically for images 21–50 in the batch pipeline. **This is the recommended workflow** — draw a red box around the ruler in every masked image.
+**This is the recommended workflow** — draw a red box around the ruler in every masked image.
 
 ### 3. ROI-based fallback (no mask available)
 If no mask is provided, `calibrate_ruler()` crops to `RULER_ROI_FRAC = (0.818, 0.52, 0.836, 0.64)` and runs Hough line + column-projection peak detection on that region. This only works reliably when the ruler happens to be in that position. For any other photo, provide a mask with a red box instead.
@@ -56,8 +56,8 @@ Used for any image where a standard vernier caliper is visible.
 - Best-scoring result gives the median tick spacing
 - `px/mm = median_spacing / 10` — each major caliper tick is **10 mm** apart
 
-### Checkered scale bar (images 7 & 8)
-Same peak-detection approach — the transitions between black and white squares register as peaks. Each square = **10 mm**.
+### Checkered scale bar
+Same peak-detection approach — the transitions between black and white squares register as peaks. Each square = **10 mm**. No separate code path: a checker bar and a tick strip are both just periodic signals to the same detector.
 
 ### Silver body extent fallback
 Used when tick detection fails (caliper too far from camera, extreme angle, etc.):
@@ -67,23 +67,23 @@ Used when tick detection fails (caliper too far from camera, extreme angle, etc.
 
 ---
 
-## HARDCODED CALIBRATION TABLE (batch pipeline only, images 1–20)
+## PREVIOUSLY VERIFIED VALUES FOR THE TRAINING IMAGES (reference only)
 
-The **batch** script uses pre-verified values for images 1–20. The single-image `measure_oysters.py` script no longer has any hardcoded constant — it always auto-detects.
+`measure_oysters.py` has **no** hardcoded calibration constant — it always auto-detects or takes
+`--px-per-mm`. The table below is a historical record of hand-verified values for training images
+1–20, kept only so a re-run on one of those photos can be sanity-checked against a known-good number.
+No code reads it, and there is no batch script in this repo.
 
 ```python
-CALIBRATION = {
-    1: 7.95,  2: 11.90,  3:  9.40,  4:  9.25,
-    5: 3.90,  6:  3.40,  7:  5.20,  8:  6.20,
-    9: 3.30, 10:  3.70, 11: 10.60, 12:  7.15,
-   13: 9.40, 14:  6.60, 15: 12.50, 16:  9.65,
-   17:13.80, 18: 11.80, 19:  6.48, 20:  4.91,
-}
-CAL_METHOD = {
-    7: "checker bar", 8: "checker bar",
-   19: "silver body", 20: "silver body"
-}
+#  1: 7.95   2: 11.90   3:  9.40   4:  9.25
+#  5: 3.90   6:  3.40   7:  5.20   8:  6.20   (7, 8 = checker bar)
+#  9: 3.30  10:  3.70  11: 10.60  12:  7.15
+# 13: 9.40  14:  6.60  15: 12.50  16:  9.65
+# 17:13.80  18: 11.80  19:  6.48  20:  4.91   (19, 20 = silver body)
 ```
+
+The spread — 3.3 to 13.8 px/mm across twenty photos — is the reason calibration must be per-image and
+can never be carried over from another photo.
 
 ---
 

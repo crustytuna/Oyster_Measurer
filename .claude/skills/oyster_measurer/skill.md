@@ -18,8 +18,10 @@ Activate this skill when the user:
 ## DEPENDENCIES
 
 ```bash
-pip3 install opencv-python-headless openpyxl scipy Pillow matplotlib ultralytics torch
+pip3 install -r requirements.txt
 ```
+
+Or directly: `opencv-python-headless numpy scipy Pillow matplotlib openpyxl ultralytics torch torchvision`.
 
 The companion script is at: `.claude/skills/oyster_measurer/measure_oysters.py`
 
@@ -33,7 +35,8 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
     [output_dir]  \
     [site_name]   \
     [initials]    \
-    [mask_path]
+    [mask_path]   \
+    [--px-per-mm VALUE]
 ```
 
 | Argument | Required | Default | Description |
@@ -42,7 +45,12 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
 | `output_dir` | No | `~/Desktop` | Where to save the xlsx and diagnostic images |
 | `site_name` | No | `Unknown Site` | Written into the xlsx — always provide the actual location |
 | `initials` | No | `--` | Measurer initials written into xlsx |
-| `mask_path` | No | — | Path to a blue-painted mask PNG — forces blue-mask segmentation |
+| `mask_path` | No | — | Blue-painted mask PNG — forces blue-mask segmentation *and* red-box calibration |
+| `--px-per-mm` | No | — | Manual calibration override; skips auto-detection. Last resort only |
+
+One image per invocation — there is no batch mode. To process a folder, loop in the shell, or use the
+Streamlit app (`streamlit run app.py`), which takes several photos at once but requires the user to
+type px/mm for each and cannot use masks.
 
 **Example:**
 ```bash
@@ -60,37 +68,45 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
 Each step is documented in its own sub-skill file in this directory.
 
 ### Step 1 — Calibration → [`skill_calibration.md`](skill_calibration.md)
-Convert the in-frame ruler or scale reference to a pixels-per-millimetre ratio.
-Three methods: caliper major ticks (10 mm spacing), checkered scale bar (10 mm per square), or silver body extent (150 mm span). For images 1–20, hardcoded values are used. Images 21+ auto-detect from a red box drawn around the ruler in the masked PNG.
+Convert the in-frame ruler or scale reference to a pixels-per-millimetre ratio, per image.
+Priority: explicit `--px-per-mm` → red box drawn around the ruler in the masked PNG (recommended) →
+fixed-ROI tick detection. Within the automatic methods: caliper major ticks (10 mm spacing),
+checkered scale bar (10 mm per square), or silver body extent (150 mm span). There is no hardcoded
+px/mm constant, and a result outside 1–50 px/mm raises an error instead of producing a wrong number.
 
 ### Step 2 — Detect Oysters → [`skill_detect_oysters.md`](skill_detect_oysters.md)
 Locate individual oysters and return one contour per oyster.
 Priority order: **(1)** blue-painted mask + per-blob watershed, **(2)** trained YOLOv8n-seg model (`oyster_model.pt`), **(3)** adaptive threshold + global watershed fallback.
-Area filter: `MIN_OYSTER_PX = 2,000` to `MAX_OYSTER_PX = 500,000`.
+Area filter: `MIN_OYSTER_PX = 2,000` to `MAX_OYSTER_PX = 500,000` — that is the only shape filter.
 
 ### Step 3 — Measure Dimensions → [`skill_measure_dimensions.md`](skill_measure_dimensions.md)
-Fit PCA axes to each contour to find length (major axis span) and width (minor axis span) in pixels, then divide by px/mm.
-Draws green (length) and blue (width) lines through each oyster centroid on the annotated image.
+Fit a minimum-area bounding rectangle to each contour: long side = length, short side = width in
+pixels, then divide by px/mm. The centre is the image-moment centroid.
+Draws green (length) and blue (width) lines through each oyster centre on the annotated image.
 
 ### Step 4 — Export to XLSX → [`skill_export_xlsx.md`](skill_export_xlsx.md)
-Write one Excel workbook to `~/Desktop` — one tab per image, a Summary tab, two rows per oyster (length + width), and the annotated image embedded below the data rows. Flags oysters with aspect ratio > 3.5 in the Notes column.
+Write `<stem>_measured.xlsx` into `output_dir` — a single sheet, two rows per oyster (length + width).
+The annotated image and the diagnostic figure are saved as separate PNGs, not embedded. The Notes
+column is written empty; nothing is flagged automatically.
 
 ---
 
 ## AFTER RUNNING — always report
 
-1. How many oysters were detected across all images
-2. The calibration value (px/mm) and whether it falls in the expected 3–25 px/mm range
-3. Which detection method was used (blue mask / YOLO / adaptive threshold)
-4. Full path to the xlsx file saved on the Desktop
-5. Any Notes-column flags (unusual aspect ratio rows) — how many and which oyster numbers
+1. How many oysters were detected
+2. The calibration value (px/mm), which method produced it, and whether it falls in the expected 3–25 px/mm range
+3. Which detection method was used (blue mask / YOLO / adaptive threshold) — the script prints this
+4. Full paths to all three output files (xlsx, annotated PNG, diagnostic PNG)
+5. That the output is unvalidated: nothing in the repo has been checked against the 84 hand-measured
+   oysters in `oyster_test/`, so do not offer an accuracy figure. Point the user at panel ② of the
+   diagnostic figure to sanity-check calibration and panel ⑤ to eyeball the measurement lines.
 
 ---
 
 ## NOTES ON MEASUREMENT CONVENTIONS
 
-- **Length** = longest axis (anterior-posterior or dorsal-ventral depending on orientation)
-- **Width** = perpendicular axis through the same centroid
+- **Length** = long side of the minimum-area bounding rectangle (anterior-posterior or dorsal-ventral depending on orientation)
+- **Width** = short side of that same rectangle
 - Measurements are **2D projections** — a tilted shell reads shorter than its true length
 - Lay oysters flat before photographing for best accuracy
 - The ruler must be in the same focal plane as the oysters

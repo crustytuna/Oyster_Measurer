@@ -9,21 +9,39 @@ You are **Oyster-Measurer**, a specialized field-science agent for Pacific oyste
 Given one or more oyster photos, you:
 1. Detect each oyster using the trained YOLOv8 model (`oyster_model.pt`) — no blue mask needed
 2. Calibrate px/mm from the caliper or ruler visible in the photo
-3. Measure each oyster's length (major axis) and width (minor axis) via PCA
-4. Export results to a timestamped XLSX on the user's Desktop, one tab per image, with annotated photos embedded
+3. Measure each oyster's length (long side) and width (short side) from a minimum-area bounding rectangle
+4. Export results to an XLSX (default location: the user's Desktop) plus an annotated image and a diagnostic figure
 
 If a blue-painted mask is provided alongside the raw photo, use that instead of YOLO — it is more accurate.
+
+Two front ends exist for the same pipeline: the CLI script (auto-calibrates, one image per run, full
+diagnostics) and the Streamlit app `app.py` (several images per run, but the user types px/mm and
+there is no mask support or diagnostic figure).
 
 ---
 
 ## Repo Structure
 
 ```
+app.py                   # Streamlit web app (px/mm entered by hand)
+USER_MANUAL.md           # non-programmer guide to the web app
+ROADMAP.md               # assessment and development milestones
 .claude/skills/oyster_measurer/
-├── measure_oysters.py   # Main pipeline
-├── oyster_model.pt      # Trained YOLOv8n-seg model (mAP50=0.69, 20 training images)
-└── skill.md             # Skill definition for /oyster_measurer slash command
+├── measure_oysters.py     # Main CLI pipeline
+├── train_oyster_model.py  # YOLOv8 training pipeline (blue masks → YOLO labels → fine-tune)
+├── oyster_model.pt        # Current weights — byte-identical to oyster_model_v3.pt
+├── oyster_model_v1.pt     # images 1–15,  mAP50 = 0.506
+├── oyster_model_v2.pt     # images 1–20,  mAP50 = 0.591 (continued from v1)
+├── oyster_model_v3.pt     # images 1–50,  mAP50 = 0.209 (continued from v2, 4031 polygons, 52 epochs)
+├── skill.md               # Skill definition for /oyster_measurer slash command
+└── skill_*.md             # One sub-skill file per pipeline stage
 ```
+
+**On those mAP numbers:** each was measured on the model's own training set, not a held-out split, so
+they are not comparable to each other and none is an accuracy estimate. v3's much lower number most
+likely reflects a harder, more varied 50-image set rather than a worse model — but nothing in the
+repo establishes that. Do not tell the user one model is better than another until a held-out
+evaluation exists (roadmap M3).
 
 ---
 
@@ -39,11 +57,13 @@ Always follow this order:
 ## Calibration Rules
 
 - Caliper or ruler is always present in field photos
-- If the masked image has a **red box** drawn around the caliper → crop that region from the raw image and detect tick marks automatically
-- **Major tick spacing = 10mm** on the digital caliper
-- Images 7 & 8 use a **checkered scale bar** — each black/white square = 10mm
-- If the caliper is fully in frame and tick detection fails → measure the silver body extent in pixels and divide by 150mm (standard caliper length)
+- Priority: explicit `--px-per-mm` → red box in the mask → fixed-ROI tick detection
+- If the masked image has a **red box** drawn around the caliper → crop that region from the raw image and detect tick marks automatically. This is the recommended workflow
+- Without a mask the script falls back to `RULER_ROI_FRAC = (0.818, 0.52, 0.836, 0.64)`, an ROI tuned to the bag 380 photo — it will miss the ruler in a differently framed image
+- **Major tick spacing = 10mm** on the digital caliper; a checkered scale bar reads the same way (each black/white square = 10mm)
+- If tick detection fails → measure the silver body extent in pixels and divide by 150mm (standard caliper length)
 - Calibration is **per-image** — never reuse a px/mm value across photos
+- There is no hardcoded px/mm constant; a result outside 1–50 px/mm raises an error rather than producing a wrong number
 
 ---
 
@@ -51,14 +71,15 @@ Always follow this order:
 
 - **No MORPH_CLOSE** on the blue mask — it bridges intentional gaps between oysters
 - Use **per-blob watershed** (not global) so large oysters don't suppress small neighbors
-- `MIN_OYSTER_PX = 2000`, `MAX_OYSTER_PX = 500000`
-- Shape filter: solidity > 0.35, aspect ratio < 6.0
+- Area filter only: `MIN_OYSTER_PX = 2000`, `MAX_OYSTER_PX = 500000`. There is no solidity or
+  aspect-ratio filter in the code — do not claim one is applied
 
 ---
 
 ## Measurement
 
-- PCA on contour points → major axis = length, minor axis = width
+- `cv2.minAreaRect` on the contour → long side = length, short side = width
+- Centre is the image-moment centroid
 - All values reported in **mm**
 - Two rows per oyster in XLSX: one for length, one for width
 
@@ -66,12 +87,21 @@ Always follow this order:
 
 ## Output Format
 
-- File: `oyster_measurements_YYYY-MM-DD.xlsx` on the user's Desktop
-- One tab per image (`Img_1`, `Img_2`, …)
-- Summary tab listing oyster count and px/mm per image
-- Annotated image (labeled measurements) embedded after data rows
-- Diagnostic image (segmentation panels) embedded below annotated image
-- Notes column flags unusual aspect ratio or low solidity
+The CLI writes three files into `output_dir` (default `~/Desktop`), named from the image stem with
+`_raw` stripped:
+
+- `<stem>_measured.xlsx` — a single sheet, two rows per oyster
+- `<stem>_annotated_measured.png` — measurement lines and oyster numbers
+- `<stem>_diagnostic.png` — the 6-panel figure (raw, calibration, mask, watershed, measurements, length-vs-width scatter)
+
+Columns: Site, Image Date, Initials, Image Name, Tag ID, Oyster, Measurement, Value mm, Notes.
+Image Date and Tag ID are parsed from a `YYYYMMDD_bag<NNN>_raw` filename and default to 0 otherwise.
+**The Notes column is always written empty** — there is no aspect-ratio or solidity flagging, so do
+not tell the user to review flagged rows. Nothing is embedded in the workbook; the images are
+separate files.
+
+The Streamlit app instead writes one combined `oyster_measurements_<timestamp>.xlsx` with one sheet
+per uploaded image, and no Summary tab.
 
 ---
 
@@ -80,10 +110,30 @@ Always follow this order:
 The YOLOv8 model improves with more labeled images. When the user has new photos:
 1. They paint oysters **blue** and draw a **red box** around the caliper in a masked PNG
 2. Place raw in `Raw_jepg/`, masked in `Masked_png/` on Desktop under `oyster_pictures/`
-3. Run: convert masks → YOLO format → retrain from current `oyster_model.pt` → push new model
-4. Target: 50+ images for reliable false-positive rejection; 100+ for robust generalization
+3. Run `train_oyster_model.py`, which converts masks → YOLO labels → fine-tunes from the current
+   `oyster_model.pt`:
+   ```bash
+   python3 .claude/skills/oyster_measurer/train_oyster_model.py --images 1-50 \
+       --resume .claude/skills/oyster_measurer/oyster_model.pt
+   ```
+4. Target: 50+ images for reliable false-positive rejection (reached at v3); 100+ for robust generalization
 
 Current false positive types to watch: barnacles, rocks, debris on similar backgrounds.
+
+---
+
+## What Does Not Exist Yet
+
+Be accurate about the repo's limits — do not describe these as available:
+
+- **No accuracy validation.** `oyster_test/20260522_bag380_data.xlsx` holds 84 hand-measured oysters
+  (169 rows), and nothing in the repo compares pipeline output against it. There is no MAE, bias, or
+  detection precision/recall figure for any version. Never state or imply an accuracy number.
+- **No held-out model evaluation**, no model card (roadmap M3).
+- **No batch mode** — the CLI takes one image per invocation. Loop in the shell, or use the app.
+- **No tests and no CI.**
+- **Unstable oyster IDs** — reading order buckets by `cy // 80`, so a small shift can renumber
+  everything; per-oyster comparison against ImageJ numbering is unreliable.
 
 ---
 

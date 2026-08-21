@@ -16,9 +16,9 @@ Activate this sub-skill when:
 ## WHAT THIS DOES IN THE CODE
 
 Three functions in `measure_oysters.py`:
-- `segment_from_blue_mask()` — blue mask path (lines 232–321)
-- `segment_from_yolo()` — YOLO model path (lines 198–241)
-- `segment_oysters()` — adaptive threshold fallback (lines 324–391)
+- `segment_from_blue_mask()` — blue mask path
+- `segment_from_yolo()` — YOLO model path
+- `segment_oysters()` — adaptive threshold fallback
 
 The `run()` function selects which one to call:
 
@@ -26,10 +26,15 @@ The `run()` function selects which one to call:
 if mask_path is not None:
     contours, blue_binary = segment_from_blue_mask(img, mask_img)
 elif yolo_model_available():
-    contours = segment_from_yolo(img)        # falls back to adaptive if load fails
+    contours = segment_from_yolo(img)
+    if contours is None:                 # model present but unloadable
+        contours = segment_oysters(img)
 else:
     contours = segment_oysters(img)
 ```
+
+Note `segment_from_yolo()` returns `None` when the model cannot be used at all, but an empty list
+when the model ran and found nothing — only the former triggers the fallback.
 
 ---
 
@@ -84,7 +89,14 @@ else:
 **Training history:**
 - v1 (images 1–15): mAP50 = 0.506
 - v2 (images 1–20, continued from v1): mAP50 = 0.591
-- v3 (images 1–50, continued from v2): current production model
+- v3 (images 1–50, continued from v2, 4031 oyster polygons, 52 epochs): mAP50 = 0.209 — current
+  production model; `oyster_model.pt` is byte-identical to `oyster_model_v3.pt`
+
+**Do not read that as v3 being worse.** Every one of those numbers was measured on the model's own
+training images, not a held-out split, so they are not comparable: v3's lower figure most likely
+reflects a harder and more varied 50-image set. Nothing in the repo establishes which checkpoint
+actually generalizes better, and no model card exists. Establishing that is roadmap M3 — until then
+do not tell the user one model beats another, and do not quote these as accuracy figures.
 
 To retrain: `python3 train_oyster_model.py --images 1-50 --resume oyster_model.pt --epochs 150`
 

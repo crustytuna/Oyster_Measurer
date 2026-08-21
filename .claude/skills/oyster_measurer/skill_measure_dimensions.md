@@ -1,6 +1,6 @@
 # Skill: Oyster Dimension Measurement
 
-Takes the list of oyster contours from the detection step and computes the **length** (longest axis) and **width** (shortest axis) of each oyster in millimetres using PCA axis fitting.
+Takes the list of oyster contours from the detection step and computes the **length** (longest axis) and **width** (shortest axis) of each oyster in millimetres from a minimum-area bounding rectangle.
 
 ---
 
@@ -15,41 +15,53 @@ Activate this sub-skill when:
 
 ## WHAT THIS DOES IN THE CODE
 
-`measure_oyster()` in `measure_oysters.py` (lines 394–417), called once per contour. `draw_measurements()` (lines 420–457) renders the result onto the image.
+`measure_oyster()` in `measure_oysters.py`, called once per contour. `draw_measurements()` renders the result onto the image.
+
+> **History:** this step used PCA axis fitting until commit `fa43402`, which replaced it with the
+> minimum-area rectangle described below because PCA span overestimated length on irregular shells.
+> Older notes describing `cv2.PCACompute` no longer match the code.
 
 ---
 
-## HOW MEASUREMENT WORKS — PCA AXIS FITTING
+## HOW MEASUREMENT WORKS — MINIMUM-AREA BOUNDING RECTANGLE
 
 For each contour:
 
-1. **Extract contour coordinates** — reshape the `[N, 1, 2]` contour array to `[N, 2]` as float32
-2. **Run PCA** with `cv2.PCACompute(pts, mean=None)`:
-   - Returns `mean` (centroid of the shell outline) and `eigvec` (two orthogonal eigenvectors)
-   - Eigenvector 0 = direction of greatest variance = the **major axis** (length direction)
-   - Eigenvector 1 = direction of least variance = the **minor axis** (width direction)
-3. **Project all points onto each axis:**
+1. **Moment centroid** — `cv2.moments()`, then `cx = m10/m00`, `cy = m01/m00`. This is used as the
+   centre for drawing. It is more stable than a PCA mean on asymmetric or partially-detected masks.
+   A zero-area contour falls back to `(0, 0)`.
+2. **Fit the rectangle** — `cv2.minAreaRect(contour)` returns `(centre), (rw, rh), rect_angle`: the
+   smallest rectangle of any rotation that encloses the contour.
+3. **Assign length and width by side, not by axis order:**
    ```python
-   centered = pts - mean
-   proj0 = centered @ eigvec[0]   # scalar projection onto major axis
-   proj1 = centered @ eigvec[1]   # scalar projection onto minor axis
+   if rw >= rh:
+       length_px, width_px, long_angle = rw, rh, rect_angle
+   else:
+       length_px, width_px, long_angle = rh, rw, rect_angle + 90.0
    ```
-4. **Span = dimension in pixels:**
+   Length ≥ width always holds by construction — there is no separate swap step, and no random axis
+   assignment on near-circular shells.
+4. **Rebuild unit vectors** from `long_angle` for drawing:
    ```python
-   length_px = proj0.max() - proj0.min()
-   width_px  = proj1.max() - proj1.min()
+   ev0 = [cos(θ),  sin(θ)]   # along the length
+   ev1 = [-sin(θ), cos(θ)]   # along the width
    ```
-5. **Ensure length ≥ width** — swap if needed (happens when the oyster is nearly circular and PCA randomly assigns the axes)
-6. **Convert to mm:** `length_mm = length_px / px_per_mm`
+   These are returned in an `eigvec`-shaped array purely so `draw_measurements()` keeps its old
+   interface — they are rectangle-side directions, not eigenvectors.
+5. **Convert to mm:** `length_mm = length_px / px_per_mm`
 
-Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)` — centroid coordinates, pixel dimensions, orientation angle, and the eigenvectors used for drawing.
+Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
+
+Note that the rectangle is fitted around the contour, while the centre comes from the moments, so the
+two are computed independently. On a strongly asymmetric shell the drawn lines are centred slightly
+off the rectangle's own centre.
 
 ---
 
 ## WHAT IS MEASURED — BIOLOGICAL CONVENTION
 
-- **Length** = the longest axis through the oyster body, corresponding to the anterior-posterior or dorsal-ventral axis depending on how the shell is oriented
-- **Width** = the perpendicular axis through the same centroid
+- **Length** = the long side of the enclosing rectangle, corresponding to the anterior-posterior or dorsal-ventral axis depending on how the shell is oriented
+- **Width** = the short side of that same rectangle
 - These are **2D projected dimensions** from a top-down photograph — not caliper measurements
 - A tilted shell will appear shorter than its true length; lay oysters flat before photographing
 
@@ -58,20 +70,27 @@ Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)` — centroid coordin
 ## HOW IT IS DRAWN ON THE ANNOTATED IMAGE
 
 `draw_measurements()` renders onto the raw image:
-- **Green line** = length axis, drawn from centroid ± half-length along eigvec[0]
-- **Blue line** = width axis, drawn from centroid ± half-width along eigvec[1]
+- **Grey outline** = the detected contour
+- **Green line** = length axis, drawn from the centroid ± half-length along `ev0`
+- **Blue line** = width axis, drawn from the centroid ± half-width along `ev1`
 - **Red dot** = centroid `(cx, cy)`
-- **Oyster number** = white text with dark outline, positioned at the centroid
+- **Oyster number** = white text with a dark outline, positioned near the centroid
 
-The axis lines extend to the actual detected edge of the shell outline — they are not approximations.
+The line lengths equal the measured values exactly, so a line that visibly overshoots or undershoots
+the shell is a real sign the measurement is wrong — that is the intended visual check.
 
 ---
 
-## KNOWN LIMITATION — PCA SPAN ON IRREGULAR SHELLS
+## KNOWN LIMITATIONS
 
-PCA projects all contour *boundary* points and takes the full span. On a very irregular or concave shell (like an oyster with a pronounced curvature or a large notch), the outermost boundary points along the major axis may be farther apart than the true "straight-line" shell length, causing a slight overestimate.
-
-This is a known issue documented in the roadmap (M4) as a candidate for a min-area-rect or convex-hull comparison.
+- **The rectangle circumscribes the shell.** A curved or banana-shaped oyster needs a rectangle longer
+  than its straight-line shell length, so length is still biased slightly high — less so than the
+  previous PCA span, but not zero.
+- **Merged contours read as one oyster.** Two shells detected as a single contour produce one long
+  rectangle. Nothing flags this automatically; it has to be caught by eye in the annotated image.
+- **Unquantified.** No version of this step has been compared against the 84 hand-measured oysters in
+  `oyster_test/20260522_bag380_data.xlsx`, so the size of any bias is unknown (roadmap M2). Do not
+  quote an accuracy figure.
 
 ---
 
