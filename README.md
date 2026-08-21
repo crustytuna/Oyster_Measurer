@@ -160,17 +160,6 @@ Accuracy is mostly won at capture time:
 
 ---
 
-## Security
-
-**Never commit private keys, tokens, or credentials.** A private SSH key was previously committed to
-this repo. The file has been deleted from the working tree, but **it has not been purged from git
-history** and remains reachable in commit `0876578` on `main`, `Week_1`, and
-`oyster_metabolic_pathway`. Treat that key as compromised and revoke it at GitHub if that has not
-already been done — deleting the file does not neutralize the exposure. `.gitignore` now blocks the
-common credential filenames, but it is not a substitute for checking `git status` before you commit.
-
----
-
 ## Layout
 
 ```
