@@ -21,9 +21,10 @@ three-tier segmentation fallback and the human-in-the-loop blue-mask mode are go
 
 ### Blocking issues
 
-**B1 — A private SSH key is committed.** `Documents` is an OpenSSH private key,
-`Documents.pub` its public half (`ChristinaR270225@gmail.com`), pushed to a GitHub remote in commit
-`0876578`. Must be revoked and purged before any other work.
+**B1 — ~~A private SSH key is committed.~~** Resolved: key was never registered at GitHub
+(no active SSH keys found in account settings), history purged with `git-filter-repo` and
+force-pushed to all branches (`main`, `Week_1`, `oyster_metabolic_pathway`) on 2026-08-17.
+Repo made public on 2026-08-18 after 24-hour GitHub cache expiry.
 
 **B2 — Calibration is hardcoded and unverified.** `MANUAL_PX_PER_MM = 2.15` at
 `measure_oysters.py:43` is a module-level constant that unconditionally overrides
@@ -80,11 +81,8 @@ or models is a guess.
       end-to-end on bag 380.
 - [x] MIT LICENSE.
 - [x] README rewritten to cover the measurement pipeline, with setup, photo protocol, and the calibration caveat.
-- [ ] **Revoke the leaked SSH key at GitHub** — owner action, not yet confirmed. This is what
-      actually neutralizes the exposure; the file deletion does not.
-- [ ] **Purge the key from history** — deferred by decision. The key remains reachable in commit
-      `0876578` on `main`, `Week_1`, and `oyster_metabolic_pathway`. Requires
-      `pip install git-filter-repo`, a rewrite, and a coordinated force-push.
+- [x] **SSH key revoked and purged** — key was never registered at GitHub; history rewritten
+      with `git-filter-repo` and force-pushed to all branches on 2026-08-17.
 - [ ] **Git LFS** — deferred. `git-lfs` is not installed on the dev machine, and enabling the filters
       in `.gitattributes` before every collaborator has it installed breaks their checkouts. The LFS
       block is present but commented out with instructions. Revisit when the image set grows (M3).
