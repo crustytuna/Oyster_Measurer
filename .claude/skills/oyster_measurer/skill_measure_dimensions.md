@@ -74,7 +74,7 @@ Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
 - **Green line** = length axis (major ellipse axis), drawn from the centroid ± half-length along `ev0`
 - **Blue line** = width axis (minor ellipse axis), drawn from the centroid ± half-width along `ev1`
 - **Red dot** = centroid `(cx, cy)`
-- **Oyster number** = large white text with a black outline, centered on the centroid
+- **Oyster number** = solid white text on a dark filled rectangle, centered on the centroid; font scale 3.5–5.0× proportional to oyster size
 
 The line lengths equal the measured values exactly, so a line that visibly overshoots or undershoots
 the shell is a real sign the measurement is wrong — that is the intended visual check.
