@@ -534,19 +534,23 @@ def draw_measurements(img, contours, measurements, px_per_mm):
         # Centre dot
         cv2.circle(vis, (int(cx), int(cy)), 8, COL_CENTER, -1)
 
-        # Label — centered on the oyster, large and bold
+        # Label — solid white filled badge centered on the oyster
         label = str(idx)
-        font_scale = max(1.5, min(2.5, lpx / 150))
-        thickness_out, thickness_in = 8, 3
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX,
-                                      font_scale, thickness_in)
-        tx, ty = int(cx - tw / 2), int(cy + th / 2)
-        cv2.putText(vis, label, (tx, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (0, 0, 0), thickness_out, cv2.LINE_AA)
-        cv2.putText(vis, label, (tx, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (255, 255, 255), thickness_in, cv2.LINE_AA)
+        font      = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = max(2.5, min(5.0, lpx / 80))
+        thickness  = 4
+        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        pad = 10
+        tx = int(cx - tw / 2)
+        ty = int(cy + th / 2)
+        # Solid white rectangle background
+        cv2.rectangle(vis,
+                      (tx - pad, ty - th - pad),
+                      (tx + tw + pad, ty + baseline + pad),
+                      (255, 255, 255), cv2.FILLED)
+        # Dark number on top
+        cv2.putText(vis, label, (tx, ty), font, font_scale,
+                    (20, 20, 20), thickness, cv2.LINE_AA)
     return vis
 
 # ── STEP 5: Ruler diagnostic ───────────────────────────────────────────────────
