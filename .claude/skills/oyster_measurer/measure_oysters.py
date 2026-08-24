@@ -481,15 +481,15 @@ def measure_oyster(contour):
     pts = contour.reshape(-1, 2)
     if len(pts) >= 5:
         (cx, cy), (minor_ax, major_ax), angle = cv2.fitEllipse(contour)
-        # fitEllipse returns axes as full diameters; angle is the major-axis
-        # angle measured clockwise from the vertical (x-axis in image coords)
+        # fitEllipse returns (axes[0], axes[1]) and angle along axes[0].
+        # We unpacked axes[0] as minor_ax, axes[1] as major_ax, so `angle`
+        # points along minor_ax. Long axis is whichever is larger.
         length_px  = float(max(major_ax, minor_ax))
         width_px   = float(min(major_ax, minor_ax))
-        # Convert to standard angle from x-axis for ev0 direction
-        if major_ax >= minor_ax:
-            long_angle = angle  # already points along major axis
+        if minor_ax >= major_ax:
+            long_angle = angle          # axes[0] is longer; angle already points along it
         else:
-            long_angle = angle + 90.0
+            long_angle = angle + 90.0   # axes[1] is longer; rotate 90° to point along it
     else:
         # Fallback for tiny contours: use moment centroid + bounding rect
         M_cv = cv2.moments(contour)
@@ -543,10 +543,10 @@ def draw_measurements(img, contours, measurements, px_per_mm):
         tx, ty = int(cx - tw / 2), int(cy + th / 2)
         cv2.putText(vis, label, (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (255, 255, 255), thickness_out, cv2.LINE_AA)
+                    (0, 0, 0), thickness_out, cv2.LINE_AA)
         cv2.putText(vis, label, (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (30, 30, 30), thickness_in, cv2.LINE_AA)
+                    (255, 255, 255), thickness_in, cv2.LINE_AA)
     return vis
 
 # ── STEP 5: Ruler diagnostic ───────────────────────────────────────────────────
