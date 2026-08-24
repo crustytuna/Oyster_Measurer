@@ -537,7 +537,7 @@ def draw_measurements(img, contours, measurements, px_per_mm):
         # Label — solid white filled badge centered on the oyster
         label = str(idx)
         font      = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = max(2.5, min(5.0, lpx / 80))
+        font_scale = max(6.0, min(12.0, lpx / 30))
         thickness  = 4
         (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
         pad = 10

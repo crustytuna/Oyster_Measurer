@@ -203,7 +203,7 @@ if st.button("▶  Run Analysis", type="primary", use_container_width=True):
 
         # Downsample to a display-friendly width before drawing annotations so
         # that font sizes and line widths look correct in the browser.
-        ANN_W = 1400
+        ANN_W = 2000
         h_img, w_img = img_bgr.shape[:2]
         ann_scale = min(1.0, ANN_W / w_img)
         if ann_scale < 1.0:
