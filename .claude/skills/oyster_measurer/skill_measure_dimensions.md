@@ -72,7 +72,7 @@ Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
 `draw_measurements()` renders onto the raw image:
 - **Grey outline** = the detected contour
 - **Green line** = length axis (major ellipse axis), drawn from the centroid ± half-length along `ev0`
-- **Blue line** = width axis (minor ellipse axis), drawn from the centroid ± half-width along `ev1`
+- **Blue line** = width axis (minor ellipse axis), drawn from the centroid ± half-width along `ev1`; color constants are defined in BGR and display correctly as green/blue after BGR→RGB conversion in Streamlit or cv2.imwrite
 - **Red dot** = centroid `(cx, cy)`
 - **Oyster number** = solid white text on a dark filled rectangle, centered on the centroid; font scale 3.5–5.0× proportional to oyster size
 

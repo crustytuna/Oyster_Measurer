@@ -41,9 +41,9 @@ MAX_OYSTER_PX    = 500_000     # maximum (avoids picking up the whole table)
 RULER_ROI_FRAC   = (0.818, 0.52, 0.836, 0.64)  # fallback ROI when no mask red-box is available
 
 # ── Colours (BGR for OpenCV, then converted) ──────────────────────────────────
-COL_LENGTH = (0,   220,  50)   # green
-COL_WIDTH  = (50,  120, 255)   # blue
-COL_CENTER = (255,  50,  50)   # red
+COL_LENGTH = (0,   220,  50)   # green  (BGR → RGB: 50,220,0)
+COL_WIDTH  = (255, 120,  50)   # blue   (BGR → RGB: 50,120,255)
+COL_CENTER = (255,  50,  50)   # red    (BGR → RGB: 50,50,255)
 COL_RULER  = (0,  200, 255)    # yellow-ish
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,7 +537,7 @@ def draw_measurements(img, contours, measurements, px_per_mm):
         # Label — solid white number, dark filled background for contrast
         label = str(idx)
         font       = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = max(3.5, min(5.0, lpx / 100))
+        font_scale = max(4.0, min(6.0, lpx / 80))
         thickness  = 6
         (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
         pad = 12
