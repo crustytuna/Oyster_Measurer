@@ -201,7 +201,24 @@ if st.button("▶  Run Analysis", type="primary", use_container_width=True):
 
         meas = [mo.measure_oyster(c) for c in contours]
 
-        annotated_bgr = mo.draw_measurements(img_bgr, contours, meas, ratio)
+        # Downsample to a display-friendly width before drawing annotations so
+        # that font sizes and line widths look correct in the browser.
+        ANN_W = 1400
+        h_img, w_img = img_bgr.shape[:2]
+        ann_scale = min(1.0, ANN_W / w_img)
+        if ann_scale < 1.0:
+            ann_w = int(w_img * ann_scale)
+            ann_h = int(h_img * ann_scale)
+            img_ann = cv2.resize(img_bgr, (ann_w, ann_h))
+            contours_ann = [np.round(c.astype(float) * ann_scale).astype(np.int32)
+                            for c in contours]
+            meas_ann = [(cx * ann_scale, cy * ann_scale,
+                         lpx * ann_scale, wpx * ann_scale, a, ev)
+                        for cx, cy, lpx, wpx, a, ev in meas]
+        else:
+            img_ann, contours_ann, meas_ann = img_bgr, contours, meas
+
+        annotated_bgr = mo.draw_measurements(img_ann, contours_ann, meas_ann, ratio)
         annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
 
         results.append((f.name, annotated_rgb, meas, ratio))
