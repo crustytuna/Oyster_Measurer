@@ -514,7 +514,7 @@ def draw_measurements(img, contours, measurements, px_per_mm):
             enumerate(zip(contours, measurements), start=1):
 
         # Contour outline
-        cv2.drawContours(vis, [contour], -1, (200, 200, 200), 1)
+        cv2.drawContours(vis, [contour], -1, (200, 200, 200), 3)
 
         half_l = lpx / 2
         half_w = wpx / 2
@@ -523,28 +523,30 @@ def draw_measurements(img, contours, measurements, px_per_mm):
         ev0 = eigvec[0]
         p1 = (int(cx + half_l * ev0[0]), int(cy + half_l * ev0[1]))
         p2 = (int(cx - half_l * ev0[0]), int(cy - half_l * ev0[1]))
-        cv2.line(vis, p1, p2, COL_LENGTH, 2)
+        cv2.line(vis, p1, p2, COL_LENGTH, 5)
 
         # Width line (minor axis)
         ev1 = eigvec[1]
         p3 = (int(cx + half_w * ev1[0]), int(cy + half_w * ev1[1]))
         p4 = (int(cx - half_w * ev1[0]), int(cy - half_w * ev1[1]))
-        cv2.line(vis, p3, p4, COL_WIDTH, 2)
+        cv2.line(vis, p3, p4, COL_WIDTH, 5)
 
         # Centre dot
-        cv2.circle(vis, (int(cx), int(cy)), 5, COL_CENTER, -1)
+        cv2.circle(vis, (int(cx), int(cy)), 8, COL_CENTER, -1)
 
-        # Label
+        # Label — centered on the oyster, large and bold
         label = str(idx)
-        font_scale = max(0.45, min(0.75, lpx / 220))
-        cv2.putText(vis, label,
-                    (int(cx) + 6, int(cy) - 6),
+        font_scale = max(1.5, min(2.5, lpx / 150))
+        thickness_out, thickness_in = 8, 3
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX,
+                                      font_scale, thickness_in)
+        tx, ty = int(cx - tw / 2), int(cy + th / 2)
+        cv2.putText(vis, label, (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (255, 255, 255), 3, cv2.LINE_AA)
-        cv2.putText(vis, label,
-                    (int(cx) + 6, int(cy) - 6),
+                    (255, 255, 255), thickness_out, cv2.LINE_AA)
+        cv2.putText(vis, label, (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale,
-                    (30, 30, 30), 1, cv2.LINE_AA)
+                    (30, 30, 30), thickness_in, cv2.LINE_AA)
     return vis
 
 # ── STEP 5: Ruler diagnostic ───────────────────────────────────────────────────
