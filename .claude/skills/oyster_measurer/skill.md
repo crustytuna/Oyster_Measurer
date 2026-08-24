@@ -80,8 +80,9 @@ Priority order: **(1)** blue-painted mask + per-blob watershed, **(2)** trained 
 Area filter: `MIN_OYSTER_PX = 2,000` to `MAX_OYSTER_PX = 500,000` — that is the only shape filter.
 
 ### Step 3 — Measure Dimensions → [`skill_measure_dimensions.md`](skill_measure_dimensions.md)
-Fit a minimum-area bounding rectangle to each contour: long side = length, short side = width in
-pixels, then divide by px/mm. The centre is the image-moment centroid.
+Fit an ellipse to each contour (`cv2.fitEllipse`): major axis = length, minor axis = width in
+pixels, then divide by px/mm. The centre is the image-moment centroid. Ellipse fitting averages over
+all contour points so shell bumps don't inflate the measurement.
 Draws green (length) and blue (width) lines through each oyster centre on the annotated image.
 
 ### Step 4 — Export to XLSX → [`skill_export_xlsx.md`](skill_export_xlsx.md)
@@ -105,8 +106,8 @@ column is written empty; nothing is flagged automatically.
 
 ## NOTES ON MEASUREMENT CONVENTIONS
 
-- **Length** = long side of the minimum-area bounding rectangle (anterior-posterior or dorsal-ventral depending on orientation)
-- **Width** = short side of that same rectangle
+- **Length** = major axis of the fitted ellipse (anterior-posterior or dorsal-ventral depending on orientation)
+- **Width** = minor axis of the fitted ellipse
 - Measurements are **2D projections** — a tilted shell reads shorter than its true length
 - Lay oysters flat before photographing for best accuracy
 - The ruler must be in the same focal plane as the oysters

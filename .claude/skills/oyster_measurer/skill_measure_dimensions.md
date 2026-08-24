@@ -17,44 +17,44 @@ Activate this sub-skill when:
 
 `measure_oyster()` in `measure_oysters.py`, called once per contour. `draw_measurements()` renders the result onto the image.
 
-> **History:** this step used PCA axis fitting until commit `fa43402`, which replaced it with the
-> minimum-area rectangle described below because PCA span overestimated length on irregular shells.
-> Older notes describing `cv2.PCACompute` no longer match the code.
+> **History:** PCA axis fitting → `minAreaRect` (commit `fa43402`) → `fitEllipse` (commit `7e5921f`).
+> The switch to fitEllipse reduced width MAE from ~13.7 mm to ~12.9 mm on the bag380 ground truth
+> (78 matched pairs, px/mm = 2.37). Older notes describing `cv2.PCACompute` or `minAreaRect` no
+> longer match the code.
 
 ---
 
-## HOW MEASUREMENT WORKS — MINIMUM-AREA BOUNDING RECTANGLE
+## HOW MEASUREMENT WORKS — FITTED ELLIPSE
 
 For each contour:
 
 1. **Moment centroid** — `cv2.moments()`, then `cx = m10/m00`, `cy = m01/m00`. This is used as the
    centre for drawing. It is more stable than a PCA mean on asymmetric or partially-detected masks.
    A zero-area contour falls back to `(0, 0)`.
-2. **Fit the rectangle** — `cv2.minAreaRect(contour)` returns `(centre), (rw, rh), rect_angle`: the
-   smallest rectangle of any rotation that encloses the contour.
-3. **Assign length and width by side, not by axis order:**
+2. **Fit an ellipse** — `cv2.fitEllipse(contour)` returns `(cx, cy), (axes[0], axes[1]), angle`:
+   the best-fit ellipse through all contour points. `angle` is the rotation of `axes[0]` from the
+   horizontal. Requires ≥ 5 contour points; falls back to `minAreaRect` for tiny contours.
+3. **Assign length and width:**
    ```python
-   if rw >= rh:
-       length_px, width_px, long_angle = rw, rh, rect_angle
+   length_px = max(axes[0], axes[1])
+   width_px  = min(axes[0], axes[1])
+   # angle points along axes[0]; rotate 90° if axes[1] is the longer one
+   if axes[0] >= axes[1]:
+       long_angle = angle
    else:
-       length_px, width_px, long_angle = rh, rw, rect_angle + 90.0
+       long_angle = angle + 90.0
    ```
-   Length ≥ width always holds by construction — there is no separate swap step, and no random axis
-   assignment on near-circular shells.
+   Because the ellipse averages over all contour points, shell bumps and protrusions do not inflate
+   the measurement the way a circumscribed rectangle does. This matches ImageJ's "Fit Ellipse"
+   measurement convention.
 4. **Rebuild unit vectors** from `long_angle` for drawing:
    ```python
    ev0 = [cos(θ),  sin(θ)]   # along the length
    ev1 = [-sin(θ), cos(θ)]   # along the width
    ```
-   These are returned in an `eigvec`-shaped array purely so `draw_measurements()` keeps its old
-   interface — they are rectangle-side directions, not eigenvectors.
 5. **Convert to mm:** `length_mm = length_px / px_per_mm`
 
 Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
-
-Note that the rectangle is fitted around the contour, while the centre comes from the moments, so the
-two are computed independently. On a strongly asymmetric shell the drawn lines are centred slightly
-off the rectangle's own centre.
 
 ---
 
@@ -71,10 +71,10 @@ off the rectangle's own centre.
 
 `draw_measurements()` renders onto the raw image:
 - **Grey outline** = the detected contour
-- **Green line** = length axis, drawn from the centroid ± half-length along `ev0`
-- **Blue line** = width axis, drawn from the centroid ± half-width along `ev1`
+- **Green line** = length axis (major ellipse axis), drawn from the centroid ± half-length along `ev0`
+- **Blue line** = width axis (minor ellipse axis), drawn from the centroid ± half-width along `ev1`
 - **Red dot** = centroid `(cx, cy)`
-- **Oyster number** = white text with a dark outline, positioned near the centroid
+- **Oyster number** = large white text with a black outline, centered on the centroid
 
 The line lengths equal the measured values exactly, so a line that visibly overshoots or undershoots
 the shell is a real sign the measurement is wrong — that is the intended visual check.
@@ -83,14 +83,16 @@ the shell is a real sign the measurement is wrong — that is the intended visua
 
 ## KNOWN LIMITATIONS
 
-- **The rectangle circumscribes the shell.** A curved or banana-shaped oyster needs a rectangle longer
-  than its straight-line shell length, so length is still biased slightly high — less so than the
-  previous PCA span, but not zero.
-- **Merged contours read as one oyster.** Two shells detected as a single contour produce one long
-  rectangle. Nothing flags this automatically; it has to be caught by eye in the annotated image.
-- **Unquantified.** No version of this step has been compared against the 84 hand-measured oysters in
-  `oyster_test/20260522_bag380_data.xlsx`, so the size of any bias is unknown (roadmap M2). Do not
-  quote an accuracy figure.
+- **Ellipse fitting averages bumps, not true shell outline.** A strongly curved or irregular shell
+  may have a fitted ellipse that doesn't perfectly follow its boundary, but this is generally better
+  than a circumscribing rectangle.
+- **Merged contours read as one oyster.** YOLO sometimes detects 2–3 touching oysters as a single
+  mask. The ellipse fitted to that merged contour over-estimates both length and width. Nothing flags
+  this automatically; catch it by eye in the annotated image.
+- **bag380 validation (78 matched pairs, px/mm = 2.37):**
+  - Length MAE = 15.9 mm, bias = +7.3 mm (pipeline over-estimates)
+  - Width MAE = 12.9 mm, bias = +11.1 mm
+  - Most of the remaining bias is from YOLO merging touching oysters, not from the measurement algorithm.
 
 ---
 

@@ -78,7 +78,9 @@ Always follow this order:
 
 ## Measurement
 
-- `cv2.minAreaRect` on the contour → long side = length, short side = width
+- `cv2.fitEllipse` on the contour → major axis = length, minor axis = width
+- Ellipse fitting averages over all contour points so bumps don't inflate measurements
+- Falls back to `minAreaRect` for contours with fewer than 5 points
 - Centre is the image-moment centroid
 - All values reported in **mm**
 - Two rows per oyster in XLSX: one for length, one for width

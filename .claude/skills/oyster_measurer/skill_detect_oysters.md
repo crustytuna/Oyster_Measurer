@@ -89,14 +89,15 @@ when the model ran and found nothing — only the former triggers the fallback.
 **Training history:**
 - v1 (images 1–15): mAP50 = 0.506
 - v2 (images 1–20, continued from v1): mAP50 = 0.591
-- v3 (images 1–50, continued from v2, 4031 oyster polygons, 52 epochs): mAP50 = 0.209 — current
-  production model; `oyster_model.pt` is byte-identical to `oyster_model_v3.pt`
+- v3 (images 1–50, continued from v2, 4031 oyster polygons, 52 epochs): mAP50 = 0.209
 
-**Do not read that as v3 being worse.** Every one of those numbers was measured on the model's own
+Only `oyster_model.pt` (= v3 weights) is kept in the repo. The intermediate v1/v2/v3 checkpoint
+files have been removed. To retrain from scratch or resume, use `oyster_model.pt`.
+
+**Do not read that mAP50 drop as v3 being worse.** Every number was measured on the model's own
 training images, not a held-out split, so they are not comparable: v3's lower figure most likely
 reflects a harder and more varied 50-image set. Nothing in the repo establishes which checkpoint
-actually generalizes better, and no model card exists. Establishing that is roadmap M3 — until then
-do not tell the user one model beats another, and do not quote these as accuracy figures.
+actually generalizes better. Establishing that is roadmap M3 — do not quote these as accuracy figures.
 
 To retrain: `python3 train_oyster_model.py --images 1-50 --resume oyster_model.pt --epochs 150`
 
