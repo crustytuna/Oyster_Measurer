@@ -466,42 +466,46 @@ def segment_oysters(img):
     contours.sort(key=sort_key)
     return contours
 
-# ── STEP 3: Measure one oyster via minimum bounding rectangle ─────────────────
+# ── STEP 3: Measure one oyster via fitted ellipse ─────────────────────────────
 def measure_oyster(contour):
     """
-    Fit a minimum-area bounding rectangle to the contour.
-    Length = long side, width = short side.
-    Centre is the image-moment centroid (more stable than PCA mean on
-    asymmetric or partially-detected masks).
+    Fit an ellipse to the contour (cv2.fitEllipse).
+    Length = major axis, width = minor axis.
+    Ellipse fitting averages over all contour points so irregular bumps
+    and protrusions do not inflate the measurement — matches ImageJ's
+    Fit Ellipse output more closely than a bounding rectangle.
+    Centre is the ellipse centre (consistent with the fitted axes).
     Returns (cx, cy, length_px, width_px, angle_deg, eigenvectors)
     """
-    # Moment-based centroid
-    M = cv2.moments(contour)
-    if M["m00"] != 0:
-        cx = float(M["m10"] / M["m00"])
-        cy = float(M["m01"] / M["m00"])
+    # fitEllipse requires at least 5 points
+    pts = contour.reshape(-1, 2)
+    if len(pts) >= 5:
+        (cx, cy), (minor_ax, major_ax), angle = cv2.fitEllipse(contour)
+        # fitEllipse returns axes as full diameters; angle is the major-axis
+        # angle measured clockwise from the vertical (x-axis in image coords)
+        length_px  = float(max(major_ax, minor_ax))
+        width_px   = float(min(major_ax, minor_ax))
+        # Convert to standard angle from x-axis for ev0 direction
+        if major_ax >= minor_ax:
+            long_angle = angle  # already points along major axis
+        else:
+            long_angle = angle + 90.0
     else:
-        cx, cy = 0.0, 0.0
-
-    # Minimum-area bounding rectangle
-    (_, _), (rw, rh), rect_angle = cv2.minAreaRect(contour)
-
-    # rect_angle is the angle of the rw side from the x-axis
-    if rw >= rh:
-        length_px  = float(rw)
-        width_px   = float(rh)
-        long_angle = rect_angle
-    else:
-        length_px  = float(rh)
-        width_px   = float(rw)
-        long_angle = rect_angle + 90.0
+        # Fallback for tiny contours: use moment centroid + bounding rect
+        M_cv = cv2.moments(contour)
+        cx = float(M_cv["m10"] / M_cv["m00"]) if M_cv["m00"] else 0.0
+        cy = float(M_cv["m01"] / M_cv["m00"]) if M_cv["m00"] else 0.0
+        (_, _), (rw, rh), rect_angle = cv2.minAreaRect(contour)
+        length_px  = float(max(rw, rh))
+        width_px   = float(min(rw, rh))
+        long_angle = rect_angle if rw >= rh else rect_angle + 90.0
 
     angle_rad = np.radians(long_angle)
     ev0    = np.array([np.cos(angle_rad),  np.sin(angle_rad)], dtype=np.float32)
     ev1    = np.array([-np.sin(angle_rad), np.cos(angle_rad)], dtype=np.float32)
     eigvec = np.array([ev0, ev1])
 
-    return cx, cy, length_px, width_px, float(long_angle), eigvec
+    return float(cx), float(cy), length_px, width_px, float(long_angle), eigvec
 
 # ── STEP 4: Draw measurement lines on a copy of the image ─────────────────────
 def draw_measurements(img, contours, measurements, px_per_mm):
