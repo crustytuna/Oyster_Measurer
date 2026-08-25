@@ -24,37 +24,31 @@ Activate this sub-skill when:
 
 ---
 
-## HOW MEASUREMENT WORKS — FITTED ELLIPSE
+## HOW MEASUREMENT WORKS — AXIS DIRECTION + CONTOUR PROJECTION
 
 For each contour:
 
-1. **Moment centroid** — `cv2.moments()`, then `cx = m10/m00`, `cy = m01/m00`. This is used as the
-   centre for drawing. It is more stable than a PCA mean on asymmetric or partially-detected masks.
-   A zero-area contour falls back to `(0, 0)`.
-2. **Fit an ellipse** — `cv2.fitEllipse(contour)` returns `(cx, cy), (axes[0], axes[1]), angle`:
-   the best-fit ellipse through all contour points. `angle` is the rotation of `axes[0]` from the
-   horizontal. Requires ≥ 5 contour points; falls back to `minAreaRect` for tiny contours.
-3. **Assign length and width:**
+1. **Moment centroid** — `cv2.moments()`, then `cx = m10/m00`, `cy = m01/m00`.
+2. **Axis direction** — `cv2.fitEllipse(contour)` determines the long-axis angle. Falls back to
+   `minAreaRect` for contours with fewer than 5 points.
+3. **Project contour points onto each axis:**
    ```python
-   length_px = max(axes[0], axes[1])
-   width_px  = min(axes[0], axes[1])
-   # angle points along axes[0]; rotate 90° if axes[1] is the longer one
-   if axes[0] >= axes[1]:
-       long_angle = angle
-   else:
-       long_angle = angle + 90.0
+   ev0 = [cos(θ), sin(θ)]       # length direction
+   ev1 = [-sin(θ), cos(θ)]      # width direction (perpendicular)
+   proj_l = contour_pts @ ev0
+   proj_w = contour_pts @ ev1
+   length_px = proj_l.max() - proj_l.min()   # caliper span along length axis
+   width_px  = proj_w.max() - proj_w.min()   # caliper span along width axis
    ```
-   Because the ellipse averages over all contour points, shell bumps and protrusions do not inflate
-   the measurement the way a circumscribed rectangle does. This matches ImageJ's "Fit Ellipse"
-   measurement convention.
-4. **Rebuild unit vectors** from `long_angle` for drawing:
-   ```python
-   ev0 = [cos(θ),  sin(θ)]   # along the length
-   ev1 = [-sin(θ), cos(θ)]   # along the width
-   ```
+   The four extreme contour vertices (argmax/argmin of each projection) are stored as line
+   endpoints — they are actual polygon vertices, so they sit on the detected outline.
+4. **Lines clipped to contour mask** — lines are drawn on a temporary layer, then only pixels
+   inside the filled contour mask are copied back. The green/blue lines physically cannot exceed
+   the red outline, regardless of line thickness.
 5. **Convert to mm:** `length_mm = length_px / px_per_mm`
 
-Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
+Returns: `(cx, cy, length_px, width_px, angle_deg, endpoints)` where `endpoints[0..3]` are the
+four extreme contour vertex coordinates.
 
 ---
 
@@ -71,10 +65,12 @@ Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
 
 `draw_measurements()` renders onto the raw image:
 - **Grey outline** = the detected contour
-- **Green line** = length axis (major ellipse axis), drawn from the centroid ± half-length along `ev0`
-- **Blue line** = width axis (minor ellipse axis), drawn from the centroid ± half-width along `ev1`; color constants are defined in BGR and display correctly as green/blue after BGR→RGB conversion in Streamlit or cv2.imwrite
-- **Red dot** = centroid `(cx, cy)`
-- **Oyster number** = solid white text on a dark filled rectangle, centered on the centroid; font scale 3.5–5.0× proportional to oyster size
+- **Red outline** = detected contour boundary (1px), drawn last so it always shows on top
+- **Green line** = length axis, connecting the two contour vertices with the greatest span along `ev0`; clipped inside the contour mask so it cannot exceed the red outline
+- **Blue line** = width axis, connecting the two contour vertices with the greatest span along `ev1`; clipped inside the contour mask
+- **Blue dot** = centroid `(cx, cy)`
+- **Oyster number** = white text with dark outline, centered on centroid, no background box; font scale 0.9–1.3× proportional to oyster size
+- Color constants are BGR; they display correctly after BGR→RGB conversion in Streamlit or `cv2.imwrite`
 
 The line lengths equal the measured values exactly, so a line that visibly overshoots or undershoots
 the shell is a real sign the measurement is wrong — that is the intended visual check.

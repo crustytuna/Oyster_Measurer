@@ -466,91 +466,85 @@ def segment_oysters(img):
     contours.sort(key=sort_key)
     return contours
 
-# ── STEP 3: Measure one oyster via fitted ellipse ─────────────────────────────
+# ── STEP 3: Measure one oyster via contour projection ────────────────────────
 def measure_oyster(contour):
     """
-    Fit an ellipse to the contour (cv2.fitEllipse).
-    Length = major axis, width = minor axis.
-    Ellipse fitting averages over all contour points so irregular bumps
-    and protrusions do not inflate the measurement — matches ImageJ's
-    Fit Ellipse output more closely than a bounding rectangle.
-    Centre is the ellipse centre (consistent with the fitted axes).
-    Returns (cx, cy, length_px, width_px, angle_deg, eigenvectors)
+    Use fitEllipse to get the long-axis direction, then project the actual
+    contour points onto that axis to measure the true shell span.
+    Lines never exceed the detected contour boundary.
+    Returns (cx, cy, length_px, width_px, angle_deg, endpoints)
+    where endpoints[0..3] are offsets from (cx,cy) to each line tip.
     """
-    # fitEllipse requires at least 5 points
-    pts = contour.reshape(-1, 2)
+    pts = contour.reshape(-1, 2).astype(float)
+
+    # Moment-based centroid
+    M = cv2.moments(contour)
+    cx = float(M["m10"] / M["m00"]) if M["m00"] else 0.0
+    cy = float(M["m01"] / M["m00"]) if M["m00"] else 0.0
+
+    # Axis direction from fitEllipse (≥5 pts) or minAreaRect fallback
     if len(pts) >= 5:
-        (cx, cy), (minor_ax, major_ax), angle = cv2.fitEllipse(contour)
-        # fitEllipse returns (axes[0], axes[1]) and angle along axes[0].
-        # We unpacked axes[0] as minor_ax, axes[1] as major_ax, so `angle`
-        # points along minor_ax. Long axis is whichever is larger.
-        length_px  = float(max(major_ax, minor_ax))
-        width_px   = float(min(major_ax, minor_ax))
-        if minor_ax >= major_ax:
-            long_angle = angle          # axes[0] is longer; angle already points along it
-        else:
-            long_angle = angle + 90.0   # axes[1] is longer; rotate 90° to point along it
+        _, (ax0, ax1), angle = cv2.fitEllipse(contour)
+        long_angle = angle if ax0 >= ax1 else angle + 90.0
     else:
-        # Fallback for tiny contours: use moment centroid + bounding rect
-        M_cv = cv2.moments(contour)
-        cx = float(M_cv["m10"] / M_cv["m00"]) if M_cv["m00"] else 0.0
-        cy = float(M_cv["m01"] / M_cv["m00"]) if M_cv["m00"] else 0.0
         (_, _), (rw, rh), rect_angle = cv2.minAreaRect(contour)
-        length_px  = float(max(rw, rh))
-        width_px   = float(min(rw, rh))
         long_angle = rect_angle if rw >= rh else rect_angle + 90.0
 
     angle_rad = np.radians(long_angle)
-    ev0    = np.array([np.cos(angle_rad),  np.sin(angle_rad)], dtype=np.float32)
-    ev1    = np.array([-np.sin(angle_rad), np.cos(angle_rad)], dtype=np.float32)
-    eigvec = np.array([ev0, ev1])
+    ev0 = np.array([ np.cos(angle_rad), np.sin(angle_rad)])
+    ev1 = np.array([-np.sin(angle_rad), np.cos(angle_rad)])
 
-    return float(cx), float(cy), length_px, width_px, float(long_angle), eigvec
+    # Project every contour point onto each axis; span = actual shell extent
+    proj_l = pts @ ev0
+    proj_w = pts @ ev1
+    length_px = float(proj_l.max() - proj_l.min())
+    width_px  = float(proj_w.max() - proj_w.min())
+
+    # Use the actual contour points at each extreme as line endpoints —
+    # they are polygon vertices so they sit exactly on the drawn outline.
+    endpoints = np.array([
+        pts[np.argmax(proj_l)],   # length: far end
+        pts[np.argmin(proj_l)],   # length: near end
+        pts[np.argmax(proj_w)],   # width:  far end
+        pts[np.argmin(proj_w)],   # width:  near end
+    ], dtype=np.float32)
+
+    return float(cx), float(cy), length_px, width_px, float(long_angle), endpoints
 
 # ── STEP 4: Draw measurement lines on a copy of the image ─────────────────────
 def draw_measurements(img, contours, measurements, px_per_mm):
     vis = img.copy()
-    for idx, (contour, (cx, cy, lpx, wpx, angle, eigvec)) in \
+    for idx, (contour, (cx, cy, lpx, wpx, angle, endpoints)) in \
             enumerate(zip(contours, measurements), start=1):
 
-        # Contour outline
-        cv2.drawContours(vis, [contour], -1, (200, 200, 200), 3)
+        # Build a filled mask for this oyster so lines are clipped inside it
+        mask = np.zeros(vis.shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
 
-        half_l = lpx / 2
-        half_w = wpx / 2
+        # Draw lines on a temporary layer, then copy only inside-mask pixels
+        p1 = (int(endpoints[0][0]), int(endpoints[0][1]))
+        p2 = (int(endpoints[1][0]), int(endpoints[1][1]))
+        p3 = (int(endpoints[2][0]), int(endpoints[2][1]))
+        p4 = (int(endpoints[3][0]), int(endpoints[3][1]))
+        line_layer = vis.copy()
+        cv2.line(line_layer, p1, p2, COL_LENGTH, 5)
+        cv2.line(line_layer, p3, p4, COL_WIDTH, 5)
+        vis[mask > 0] = line_layer[mask > 0]
 
-        # Length line (major axis)
-        ev0 = eigvec[0]
-        p1 = (int(cx + half_l * ev0[0]), int(cy + half_l * ev0[1]))
-        p2 = (int(cx - half_l * ev0[0]), int(cy - half_l * ev0[1]))
-        cv2.line(vis, p1, p2, COL_LENGTH, 5)
-
-        # Width line (minor axis)
-        ev1 = eigvec[1]
-        p3 = (int(cx + half_w * ev1[0]), int(cy + half_w * ev1[1]))
-        p4 = (int(cx - half_w * ev1[0]), int(cy - half_w * ev1[1]))
-        cv2.line(vis, p3, p4, COL_WIDTH, 5)
+        # Red outline drawn on top so it always shows cleanly
+        cv2.drawContours(vis, [contour], -1, (0, 0, 255), 1)
 
         # Centre dot
         cv2.circle(vis, (int(cx), int(cy)), 8, COL_CENTER, -1)
 
-        # Label — solid white number, dark filled background for contrast
+        # White number, no background box
         label = str(idx)
-        font       = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = max(4.0, min(6.0, lpx / 80))
-        thickness  = 6
-        (tw, th), baseline = cv2.getTextSize(label, font, font_scale, thickness)
-        pad = 12
-        tx = int(cx - tw / 2)
-        ty = int(cy + th / 2)
-        # Dark filled rectangle so white text is always readable
-        cv2.rectangle(vis,
-                      (tx - pad, ty - th - pad),
-                      (tx + tw + pad, ty + baseline + pad),
-                      (30, 30, 30), cv2.FILLED)
-        # Solid white number — thick enough that strokes fill the character body
-        cv2.putText(vis, label, (tx, ty), font, font_scale,
-                    (255, 255, 255), thickness, cv2.LINE_AA)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fs = max(0.9, min(1.3, lpx / 170))
+        (tw, th), _ = cv2.getTextSize(label, font, fs, 2)
+        tx, ty = int(cx - tw / 2), int(cy + th / 2)
+        cv2.putText(vis, label, (tx, ty), font, fs, (0, 0, 0),     5, cv2.LINE_AA)
+        cv2.putText(vis, label, (tx, ty), font, fs, (255, 255, 255), 2, cv2.LINE_AA)
     return vis
 
 # ── STEP 5: Ruler diagnostic ───────────────────────────────────────────────────
