@@ -102,22 +102,17 @@ def _write_sheet(ws, measurements, px_per_mm: float,
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
 st.title("🦪 Oyster Measurement Tool")
-st.caption("Upload field photos · auto-calibrate px/mm from caliper · download measurements as XLSX.")
+st.caption("Upload field photos · enter px/mm · download measurements as XLSX.")
 
-# Model status banners
+# Model status banner
 if mo.yolo_model_available():
-    st.success("YOLOv8 oyster segmentation model ready.", icon="✅")
+    st.success("YOLOv8 segmentation model ready.", icon="✅")
 else:
     st.warning(
-        "YOLOv8 model not found — falling back to adaptive threshold segmentation.",
+        "YOLOv8 model not found — falling back to adaptive threshold segmentation. "
+        "Accuracy will be lower. See the User Manual for setup instructions.",
         icon="⚠️",
     )
-
-caliper_model_available = (_SKILLS_DIR / "caliper_model.pt").exists()
-if caliper_model_available:
-    st.success("YOLOv8 caliper detection model ready — px/mm will be auto-detected.", icon="✅")
-else:
-    st.warning("Caliper model not found — manual px/mm entry required.", icon="⚠️")
 
 st.divider()
 
@@ -135,10 +130,14 @@ if not files:
     st.stop()
 
 # ── Step 2: px/mm calibration ──────────────────────────────────────────────────
-st.header("Step 2 — Calibration")
-n_cols = min(len(files), 3)
-px_mm: dict[str, float] = {}
-px_mm_method: dict[str, str] = {}
+st.header("Step 2 — Enter px/mm for each photo")
+st.caption(
+    "Open each photo, count the pixels between two caliper tick marks "
+    "and enter the ratio. Typical range: 2–10 px/mm."
+)
+
+n_cols  = min(len(files), 3)
+px_mm   = {}
 file_cache: dict[str, bytes] = {}
 
 row_files = [files[i : i + n_cols] for i in range(0, len(files), n_cols)]
@@ -153,36 +152,21 @@ for row in row_files:
                 st.error(f"Cannot decode {f.name}")
                 continue
             st.image(_thumb(img_bgr), caption=f.name)
-
-            # Try auto-calibration first
-            auto_ratio, auto_method, _ = mo.calibrate_from_yolo(img_bgr)
-            if auto_ratio and 1.0 <= auto_ratio <= 50.0:
-                px_mm[f.name] = auto_ratio
-                px_mm_method[f.name] = auto_method
-                st.success(f"Auto: **{auto_ratio} px/mm** ({auto_method})")
-                # Allow manual override
-                override = st.number_input(
-                    "Override px/mm (optional)",
-                    min_value=0.5, max_value=50.0,
-                    value=float(auto_ratio), step=0.01, format="%.2f",
-                    key=f"px_{f.name}",
-                )
-                px_mm[f.name] = override
-            else:
-                st.warning(f"Auto-calibration failed ({auto_method}) — enter manually.")
-                px_mm[f.name] = st.number_input(
-                    "px/mm",
-                    min_value=0.5, max_value=50.0,
-                    value=5.0, step=0.01, format="%.2f",
-                    key=f"px_{f.name}",
-                    help="Pixels per millimetre — read from the in-frame caliper",
-                )
-                px_mm_method[f.name] = "manual"
+            px_mm[f.name] = st.number_input(
+                "px/mm",
+                min_value=0.5,
+                max_value=50.0,
+                value=5.0,
+                step=0.01,
+                format="%.2f",
+                key=f"px_{f.name}",
+                help="Pixels per millimetre for this image",
+            )
 
 # ── Step 3: Metadata ───────────────────────────────────────────────────────────
 st.header("Step 3 — Metadata")
 c1, c2 = st.columns(2)
-site     = c1.text_input("Site name", value="Unknown Site")
+site     = c1.text_input("Site name", value="Goose Point")
 initials = c2.text_input("Analyst initials", value="")
 
 # ── Step 4: Run ────────────────────────────────────────────────────────────────
