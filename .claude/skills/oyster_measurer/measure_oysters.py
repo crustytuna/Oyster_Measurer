@@ -230,6 +230,92 @@ def calibrate_from_red_box(raw_img, mask_img):
     span = float(occupied[-1] - occupied[0])
     return round(span / 150.0, 2), "silver body / 150 mm", ruler_roi
 
+# ── STEP 1b: YOLO-based caliper detection (mask-free calibration) ─────────────
+_CALIPER_MODEL_PATH = Path(__file__).parent / "caliper_model.pt"
+_caliper_model = None
+
+def _get_caliper_model():
+    global _caliper_model
+    if _caliper_model is not None:
+        return _caliper_model
+    if not _CALIPER_MODEL_PATH.exists():
+        return None
+    try:
+        from ultralytics import YOLO as _YOLO
+        _caliper_model = _YOLO(str(_CALIPER_MODEL_PATH))
+        return _caliper_model
+    except Exception:
+        return None
+
+def calibrate_from_yolo(raw_img):
+    """
+    Detect the caliper in raw_img using the trained YOLO detection model,
+    crop that region, then run tick-mark detection to compute px/mm.
+    Falls back to None if the model is unavailable or detection fails.
+    Returns (px_per_mm, method_str, ruler_roi) or (None, reason, None).
+    """
+    model = _get_caliper_model()
+    if model is None:
+        return None, "caliper_model.pt not available", None
+
+    results = model.predict(raw_img, conf=0.3, verbose=False)
+    boxes = results[0].boxes
+    if not len(boxes):
+        return None, "caliper YOLO found no caliper in image", None
+
+    # Use the highest-confidence detection
+    best_idx = int(boxes.conf.argmax())
+    x1, y1, x2, y2 = map(int, boxes.xyxy[best_idx].cpu().numpy())
+    # Add a small margin so ticks at the edges aren't clipped
+    h, w = raw_img.shape[:2]
+    pad = 20
+    x1, y1 = max(0, x1-pad), max(0, y1-pad)
+    x2, y2 = min(w, x2+pad), min(h, y2+pad)
+    ruler_roi = (x1, y1, x2, y2)
+
+    crop = raw_img[y1:y2, x1:x2]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+    from scipy.signal import find_peaks, savgol_filter
+    best = None
+    for axis, proj in [("h", gray.mean(axis=0)), ("v", gray.mean(axis=1))]:
+        length = len(proj)
+        if length < 20:
+            continue
+        wl = min(max(length // 20 | 1, 5), 51)
+        if wl % 2 == 0:
+            wl += 1
+        smooth = savgol_filter(proj, wl, 3)
+        for inv in [True, False]:
+            sig = -smooth if inv else smooth
+            for min_d in [6, 12, 20, 35]:
+                peaks, _ = find_peaks(sig, distance=min_d, prominence=2)
+                if len(peaks) < 3:
+                    continue
+                spacings = np.diff(peaks)
+                med = float(np.median(spacings))
+                cv_val = np.std(spacings) / med if med > 0 else 99
+                score = len(peaks) * 2 - cv_val * 15
+                if best is None or score > best[0]:
+                    best = (score, med, len(peaks), axis)
+
+    if best is not None:
+        conf = float(boxes.conf[best_idx])
+        px_per_mm = round(best[1] / 10.0, 2)
+        return px_per_mm, f"YOLO caliper + tick detection ({best[3]}-axis, {best[2]} peaks, det_conf={conf:.2f})", ruler_roi
+
+    # Fallback: silver body extent
+    hsv2 = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    silver = cv2.inRange(hsv2, np.array([0, 0, 100]), np.array([180, 60, 255]))
+    ch, cw = crop.shape[:2]
+    proj = silver.mean(axis=0) if cw >= ch else silver.mean(axis=1)
+    occupied = np.where(proj > 30)[0]
+    if len(occupied) < 10:
+        return None, "caliper detected but tick/body detection failed", None
+    span = float(occupied[-1] - occupied[0])
+    return round(span / 150.0, 2), "YOLO caliper + silver body / 150 mm", ruler_roi
+
+
 # ── STEP 2a: YOLO model segmentation (primary, mask-free) ────────────────────
 # Model lives next to this script; absent = fall back to blue mask or threshold.
 _YOLO_MODEL_PATH = Path(__file__).parent / "oyster_model.pt"
