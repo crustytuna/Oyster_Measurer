@@ -213,7 +213,7 @@ if st.button("▶  Run Analysis", type="primary", use_container_width=True):
             contours_ann = [np.round(c.astype(float) * ann_scale).astype(np.int32)
                             for c in contours]
             meas_ann = [(cx * ann_scale, cy * ann_scale,
-                         lpx * ann_scale, wpx * ann_scale, a, ev)
+                         lpx * ann_scale, wpx * ann_scale, a, ev * ann_scale)
                         for cx, cy, lpx, wpx, a, ev in meas]
         else:
             img_ann, contours_ann, meas_ann = img_bgr, contours, meas
