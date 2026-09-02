@@ -65,27 +65,27 @@ python3 .claude/skills/oyster_measurer/measure_oysters.py \
 
 ## PIPELINE — FOUR STEPS
 
-Each step is documented in its own sub-skill file in this directory.
+Each step is documented in its own sub-skill file under `docs/`.
 
-### Step 1 — Calibration → [`skill_calibration.md`](skill_calibration.md)
+### Step 1 — Calibration → [`docs/skill_calibration.md`](docs/skill_calibration.md)
 Convert the in-frame ruler or scale reference to a pixels-per-millimetre ratio, per image.
 Priority: explicit `--px-per-mm` → red box drawn around the ruler in the masked PNG (recommended) →
 fixed-ROI tick detection. Within the automatic methods: caliper major ticks (10 mm spacing),
 checkered scale bar (10 mm per square), or silver body extent (150 mm span). There is no hardcoded
 px/mm constant, and a result outside 1–50 px/mm raises an error instead of producing a wrong number.
 
-### Step 2 — Detect Oysters → [`skill_detect_oysters.md`](skill_detect_oysters.md)
+### Step 2 — Detect Oysters → [`docs/skill_detect_oysters.md`](docs/skill_detect_oysters.md)
 Locate individual oysters and return one contour per oyster.
-Priority order: **(1)** blue-painted mask + per-blob watershed, **(2)** trained YOLOv8n-seg model (`oyster_model.pt`), **(3)** adaptive threshold + global watershed fallback.
+Priority order: **(1)** blue-painted mask + per-blob watershed, **(2)** trained YOLOv8n-seg model (`models/oyster_model.pt`), **(3)** adaptive threshold + global watershed fallback.
 Area filter: `MIN_OYSTER_PX = 2,000` to `MAX_OYSTER_PX = 500,000` — that is the only shape filter.
 
-### Step 3 — Measure Dimensions → [`skill_measure_dimensions.md`](skill_measure_dimensions.md)
+### Step 3 — Measure Dimensions → [`docs/skill_measure_dimensions.md`](docs/skill_measure_dimensions.md)
 Fit an ellipse to each contour (`cv2.fitEllipse`): major axis = length, minor axis = width in
 pixels, then divide by px/mm. The centre is the image-moment centroid. Ellipse fitting averages over
 all contour points so shell bumps don't inflate the measurement.
 Draws green (length) and blue (width) lines through each oyster centre on the annotated image.
 
-### Step 4 — Export to XLSX → [`skill_export_xlsx.md`](skill_export_xlsx.md)
+### Step 4 — Export to XLSX → [`docs/skill_export_xlsx.md`](docs/skill_export_xlsx.md)
 Write `<stem>_measured.xlsx` into `output_dir` — a single sheet, two rows per oyster (length + width).
 The annotated image and the diagnostic figure are saved as separate PNGs, not embedded. The Notes
 column is written empty; nothing is flagged automatically.

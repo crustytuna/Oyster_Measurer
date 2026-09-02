@@ -27,14 +27,20 @@ app.py                   # Streamlit web app (px/mm entered by hand)
 USER_MANUAL.md           # non-programmer guide to the web app
 ROADMAP.md               # assessment and development milestones
 .claude/skills/oyster_measurer/
-├── measure_oysters.py     # Main CLI pipeline
-├── train_oyster_model.py  # YOLOv8 training pipeline (blue masks → YOLO labels → fine-tune)
-├── oyster_model.pt        # Current weights — byte-identical to oyster_model_v3.pt
-├── oyster_model_v1.pt     # images 1–15,  mAP50 = 0.506
-├── oyster_model_v2.pt     # images 1–20,  mAP50 = 0.591 (continued from v1)
-├── oyster_model_v3.pt     # images 1–50,  mAP50 = 0.209 (continued from v2, 4031 polygons, 52 epochs)
+├── measure_oysters.py     # Main CLI pipeline (imported by app.py)
 ├── skill.md               # Skill definition for /oyster_measurer slash command
-└── skill_*.md             # One sub-skill file per pipeline stage
+├── docs/                  # Sub-skill documentation (one file per pipeline stage)
+│   ├── skill_calibration.md
+│   ├── skill_detect_oysters.md
+│   ├── skill_measure_dimensions.md
+│   └── skill_export_xlsx.md
+├── models/                # Trained model weights
+│   ├── oyster_model.pt    # YOLOv8n-seg, trained on 50 images (mAP50≈0.21 on training set)
+│   ├── caliper_model.pt   # YOLOv8n-det for caliper detection (mAP50=0.995)
+│   └── yolov8n.pt         # Pretrained base model (used only when retraining)
+└── training/              # One-time scripts for retraining models
+    ├── train_oyster_model.py   # Blue masks → YOLO labels → fine-tune oyster_model.pt
+    └── train_caliper_model.py  # Red-box PNGs → YOLO labels → fine-tune caliper_model.pt
 ```
 
 **On those mAP numbers:** each was measured on the model's own training set, not a held-out split, so
@@ -115,8 +121,8 @@ The YOLOv8 model improves with more labeled images. When the user has new photos
 3. Run `train_oyster_model.py`, which converts masks → YOLO labels → fine-tunes from the current
    `oyster_model.pt`:
    ```bash
-   python3 .claude/skills/oyster_measurer/train_oyster_model.py --images 1-50 \
-       --resume .claude/skills/oyster_measurer/oyster_model.pt
+   python3 .claude/skills/oyster_measurer/training/train_oyster_model.py --images 1-50 \
+       --resume .claude/skills/oyster_measurer/models/oyster_model.pt
    ```
 4. Target: 50+ images for reliable false-positive rejection (reached at v3); 100+ for robust generalization
 

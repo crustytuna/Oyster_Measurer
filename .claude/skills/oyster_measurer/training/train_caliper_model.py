@@ -19,8 +19,8 @@ RAW_DIR     = Path.home() / "Desktop/oyster_pictures/Raw_jepg"
 MASK_DIR    = Path.home() / "Desktop/oyster_pictures/Masked_png"
 DATASET_DIR = Path.home() / "Desktop/caliper_yolo_dataset"
 RUNS_DIR    = Path.home() / "Desktop/caliper_yolo_runs"
-OUT_MODEL   = Path(__file__).parent / "caliper_model.pt"
-BASE_MODEL  = "yolov8n.pt"   # detection, not segmentation
+OUT_MODEL   = Path(__file__).parent.parent / "models" / "caliper_model.pt"
+BASE_MODEL  = str(Path(__file__).parent.parent / "models" / "yolov8n.pt")  # detection, not segmentation
 
 RED_LOWER1 = np.array([0,   80,  80])
 RED_UPPER1 = np.array([8,  255, 255])

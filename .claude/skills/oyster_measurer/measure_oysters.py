@@ -231,7 +231,7 @@ def calibrate_from_red_box(raw_img, mask_img):
     return round(span / 150.0, 2), "silver body / 150 mm", ruler_roi
 
 # ── STEP 1b: YOLO-based caliper detection (mask-free calibration) ─────────────
-_CALIPER_MODEL_PATH = Path(__file__).parent / "caliper_model.pt"
+_CALIPER_MODEL_PATH = Path(__file__).parent / "models" / "caliper_model.pt"
 _caliper_model = None
 
 def _get_caliper_model():
@@ -318,7 +318,7 @@ def calibrate_from_yolo(raw_img):
 
 # ── STEP 2a: YOLO model segmentation (primary, mask-free) ────────────────────
 # Model lives next to this script; absent = fall back to blue mask or threshold.
-_YOLO_MODEL_PATH = Path(__file__).parent / "oyster_model.pt"
+_YOLO_MODEL_PATH = Path(__file__).parent / "models" / "oyster_model.pt"
 _yolo_model = None  # loaded lazily on first call
 
 def _get_yolo_model():
