@@ -24,31 +24,39 @@ Activate this sub-skill when:
 
 ---
 
-## HOW MEASUREMENT WORKS — AXIS DIRECTION + CONTOUR PROJECTION
+## HOW MEASUREMENT WORKS — FITTED ELLIPSE (Method B, validated best)
+
+Three methods were compared on bag380 ground truth (78 matched pairs, px/mm=2.37):
+
+| Method | Length MAE | Length bias | Width MAE | Width bias |
+|--------|-----------|-------------|-----------|------------|
+| minAreaRect | 15.55mm | −1.48mm | 13.66mm | +12.12mm |
+| **fitEllipse** | **15.88mm** | **+7.31mm** | **12.89mm** | **+11.14mm** |
+| Contour projection | 16.08mm | +6.99mm | 15.84mm | +14.68mm |
+
+fitEllipse gives the best width MAE and best within-10mm counts on both axes.
 
 For each contour:
 
 1. **Moment centroid** — `cv2.moments()`, then `cx = m10/m00`, `cy = m01/m00`.
-2. **Axis direction** — `cv2.fitEllipse(contour)` determines the long-axis angle. Falls back to
-   `minAreaRect` for contours with fewer than 5 points.
-3. **Project contour points onto each axis:**
+2. **Fit ellipse** — `cv2.fitEllipse(contour)` returns centre, `(minor_ax, major_ax)`, angle.
+   Falls back to `minAreaRect` for contours with fewer than 5 points.
+3. **Assign length and width:**
    ```python
-   ev0 = [cos(θ), sin(θ)]       # length direction
-   ev1 = [-sin(θ), cos(θ)]      # width direction (perpendicular)
-   proj_l = contour_pts @ ev0
-   proj_w = contour_pts @ ev1
-   length_px = proj_l.max() - proj_l.min()   # caliper span along length axis
-   width_px  = proj_w.max() - proj_w.min()   # caliper span along width axis
+   length_px = max(major_ax, minor_ax)
+   width_px  = min(major_ax, minor_ax)
+   long_angle = angle if minor_ax >= major_ax else angle + 90.0
    ```
-   The four extreme contour vertices (argmax/argmin of each projection) are stored as line
-   endpoints — they are actual polygon vertices, so they sit on the detected outline.
-4. **Lines clipped to contour mask** — lines are drawn on a temporary layer, then only pixels
-   inside the filled contour mask are copied back. The green/blue lines physically cannot exceed
-   the red outline, regardless of line thickness.
-5. **Convert to mm:** `length_mm = length_px / px_per_mm`
+4. **Unit vectors** from `long_angle` for drawing:
+   ```python
+   ev0 = [cos(θ),  sin(θ)]   # along length
+   ev1 = [-sin(θ), cos(θ)]   # along width
+   ```
+5. **Lines clipped to contour mask** — drawn on a temp layer, only pixels inside the
+   filled contour are copied back. Lines cannot visually exceed the red outline.
+6. **Convert to mm:** `length_mm = length_px / px_per_mm`
 
-Returns: `(cx, cy, length_px, width_px, angle_deg, endpoints)` where `endpoints[0..3]` are the
-four extreme contour vertex coordinates.
+Returns: `(cx, cy, length_px, width_px, angle_deg, eigvec)`.
 
 ---
 
