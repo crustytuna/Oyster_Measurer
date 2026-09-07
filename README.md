@@ -23,7 +23,7 @@ the step-by-step, non-programmer guide to the web app.
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
 
-Conda users can substitute `conda env create -f environment.yml`.
+Conda users can substitute `conda env create -f environment-local.yml`.
 
 `ultralytics` and `torch` are large (~1–2 GB) but strongly recommended: without them the pipeline
 falls back to adaptive thresholding, which is considerably less accurate than the trained
@@ -171,7 +171,7 @@ USER_MANUAL.md                    non-programmer guide to the web app
 ROADMAP.md                        assessment and development milestones
 requirements.txt                  full environment (CLI + app + training)
 requirements-app.txt              slim subset for Streamlit Cloud
-environment.yml                   conda alternative
+environment-local.yml             conda alternative (local dev only — not used by Streamlit)
 .claude/skills/oyster_measurer/
     measure_oysters.py            CLI pipeline
     train_oyster_model.py         YOLOv8 training pipeline
